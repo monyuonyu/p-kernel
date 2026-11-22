@@ -31,7 +31,7 @@
  *  [node1] dsem sig 0x00000003     → wakes node0 across the network
  *  [node1] dtask 0 hello           → task created on node0; prints there
  */
-
+#define DRPC_TABLE_OWNER 1      /* N3 2a: one of the two owners of dnode_table */
 #include "drpc.h"
 #include "netstack.h"
 #include "kernel.h"

@@ -2556,7 +2556,7 @@ static void cmd_kpush(const char *arg)
     UW nid = 0;
     while (*arg >= '0' && *arg <= '9') nid = nid * 10 + (UW)(*arg++ - '0');
 
-    if (nid >= DNODE_MAX || dnode_table[nid].state != DNODE_ALIVE) {
+    if (nid >= DNODE_MAX || dnode_state(nid) != DNODE_ALIVE) {
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
         sout("[kpush] node "); sout_dec(nid); sout(" not alive\r\n");
         vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
@@ -2633,7 +2633,7 @@ static void cmd_status(void)
         sout("  (single-node mode)\r\n");
     } else {
         for (UB n = 0; n < DNODE_MAX; n++) {
-            UB st = dnode_table[n].state;
+            UB st = dnode_state(n);
             if (st == DNODE_UNKNOWN && n != drpc_my_node) continue;
 
             if (n == drpc_my_node) {
@@ -2648,13 +2648,13 @@ static void cmd_status(void)
             /* IP */
             if (n == drpc_my_node) {
                 /* own IP from drpc */
-                UW ip = dnode_table[n].ip;
+                UW ip = dnode_ip(n);
                 for (INT b = 0; b < 4; b++) {
                     if (b) sout(".");
                     sout_dec((ip >> (b * 8)) & 0xFF);
                 }
             } else {
-                UW ip = dnode_table[n].ip;
+                UW ip = dnode_ip(n);
                 for (INT b = 0; b < 4; b++) {
                     if (b) sout(".");
                     sout_dec((ip >> (b * 8)) & 0xFF);

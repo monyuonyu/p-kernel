@@ -335,7 +335,7 @@ void replica_task(INT stacd, void *exinf)
 
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
-            if (dnode_table[n].state != DNODE_ALIVE) continue;
+            if (dnode_state(n) != DNODE_ALIVE) continue;
             send_snapshot_to(n, 1 /* paced */);
         }
     }
@@ -348,7 +348,7 @@ void replica_task(INT stacd, void *exinf)
 void replica_push_to(pk_node_t node_id)
 {
     if (node_id >= DNODE_MAX) return;
-    if (dnode_table[node_id].state != DNODE_ALIVE) return;
+    if (dnode_state(node_id) != DNODE_ALIVE) return;
     /* コールバック/イベント文脈から呼ばれ得るため paced なし */
     send_snapshot_to(node_id, 0);
 }

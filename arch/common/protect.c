@@ -348,7 +348,7 @@ void protect_tick(UW elapsed_ms)
         for (INT n = 0; n < DNODE_MAX; n++) {
             if (n == (INT)drpc_my_node) continue;
             if (objs[i].holders[n]) continue;             /* already a holder  */
-            if (dnode_table[n].state != DNODE_ALIVE) continue;
+            if (dnode_state(n) != DNODE_ALIVE) continue;
             if (!region_is_member((UB)n)) continue;       /* region-scoped (§7)*/
             pfs_repl_push(objs[i].id, (UB)n);
         }

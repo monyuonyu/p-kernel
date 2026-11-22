@@ -148,7 +148,7 @@ int main(void)
     printf("   sizeof(kdds_topics)     = %-8lu B   (topic table; sized by R)\n",
            (unsigned long)sizeof(kdds_topics));
     printf("   sizeof(dnode_table)     = %-8lu B   (FLEET-sized, DNODE_MAX; deferred)\n",
-           (unsigned long)sizeof(dnode_table));
+           (unsigned long)DNODE_TABLE_BYTES);
     /* budget gate (the [4096]->RED tooth). The _Static_asserts above already
      * enforce this at compile time; assert again at runtime for the log. */
     if (sizeof(DKVA_CAGG) <= CAGG_BUDGET && sizeof(DKVA_CAGG_SLOT) <= CAGG_SLOT_BUDGET)

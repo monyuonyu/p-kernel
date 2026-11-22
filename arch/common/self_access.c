@@ -79,7 +79,7 @@ static UW self_alive_peers(void)
     UW n = 0;
     for (INT i = 0; i < DNODE_MAX; i++) {
         if ((UB)i == drpc_my_node) continue;          /* exclude self */
-        if (dnode_table[i].state == DNODE_ALIVE) n++;
+        if (dnode_state(i) == DNODE_ALIVE) n++;
     }
     return n;
 }

@@ -164,7 +164,7 @@ INT lookup_responsible_alive(const U1 key[LOOKUP_KEY_LEN],
     INT n = 0;
 
     for (UB i = 0; i < DNODE_MAX; i++) {
-        if (dnode_table[i].state == DNODE_ALIVE) members[n++] = i;
+        if (dnode_state(i) == DNODE_ALIVE) members[n++] = i;
     }
     if (n == 0) return 0;   /* no cluster yet */
     return lookup_responsible(key, members, n, out, r);
@@ -451,7 +451,7 @@ INT lookup_candidates(const U1 key[LOOKUP_KEY_LEN], pk_node_t out[], INT k)
     INT n = 0;
 
     for (UB i = 0; i < DNODE_MAX; i++) {
-        if (dnode_table[i].state == DNODE_ALIVE) members[n++] = i;
+        if (dnode_state(i) == DNODE_ALIVE) members[n++] = i;
     }
     if (n == 0) return 0;   /* no cluster yet */
     return lookup_candidates_in(key, members, n, out, k);

@@ -7,10 +7,17 @@
 #   D1  drpc.o (the REAL arch/common/drpc.c, hosted x86_64 flags) has the same
 #       static data (size: data + bss) at DNODE_MAX 64 / 256 / 1024
 #       = the node table is not sized by the fleet any more
-#   D2  outside drpc.c and swim.c, no code line under arch/ indexes
+#   D2  outside drpc.c, swim.c (and drpc.h, the door), no code line under arch/ indexes
 #       dnode_table[ directly (comment lines and a comment after code are
 #       skipped; a string literal with "//" in it may hide a use) = everyone goes through
 #       the accessors of drpc.h, so the rows can move without touching them
+#
+#   D2c (2a, audit-211 4b) outside the owners the COMPILER refuses
+#       dnode_table (drpc.h poisons it after its accessor macros): five shapes
+#       (direct, a line starting with "*", an alias pointer, "dnode_table [",
+#       sizeof) must fail with "poisoned"; the same probe through
+#       dnode_state/ip/missed/node_id and DNODE_TABLE_BYTES must compile.
+#       D2 stays as the helper that names the lines.
 #
 #   N3D_NC=1  negative control: force one [DNODE_MAX] array into drpc.o => D1 RED
 #   N3D_NC=2  negative control: scan one extra .c that indexes dnode_table[ => D2 RED
@@ -31,7 +38,7 @@ CF="-Wall -Wextra -g -O1 -no-pie -fno-pie -D_APP_X86_64_ -D_APP_LINUX_ -D_TK_HOS
 NC=""
 EXTRA=""
 case "${N3D_NC:-0}" in
-1)  printf '#include "drpc.h"\nstatic unsigned char n3d_nc_fleet[DNODE_MAX] __attribute__((used));\n' > "$B/nc.h"
+1)  printf '#define DRPC_TABLE_OWNER 1\n#include "drpc.h"\nstatic unsigned char n3d_nc_fleet[DNODE_MAX] __attribute__((used));\n' > "$B/nc.h"
     NC="-include $B/nc.h"
     echo "[unbounded-dnode] negative control 1: one [DNODE_MAX] array forced into drpc.o" ;;
 2)  printf '#include "drpc.h"\nint n3d_nc_direct(void) { return dnode_table[1].state; }\n' > "$B/n3d_nc.c"
@@ -72,7 +79,7 @@ fi
 python3 -c '
 import os, re, sys
 root, extra = sys.argv[1], sys.argv[2:]
-own = {"arch/common/drpc.c", "arch/common/swim.c"}
+own = {"arch/common/drpc.c", "arch/common/swim.c", "arch/common/include/drpc.h"}  # drpc.h: the door names the table
 files = []
 for d, _, fs in os.walk(os.path.join(root, "arch")):
     for f in fs:
@@ -98,6 +105,39 @@ if [ "$?" = 0 ]; then
     echo "[unbounded-dnode] D2 PASS: only drpc.c and swim.c index dnode_table directly"
 else
     echo "[unbounded-dnode] D2 FAIL: code outside drpc.c/swim.c indexes dnode_table directly (use the drpc.h accessors)"
+    fails=$((fails + 1))
+fi
+# D2c (2a, audit-211 4b): the compiler, not the grep, keeps the table behind
+# the door. Outside the owners, a .c that includes drpc.h and names
+# dnode_table in any shape (the auditor's b1-b3 and sizeof) must NOT compile,
+# and the stderr must say "poisoned"; the same .c through the door must compile.
+d2c=0
+printf '#include "drpc.h"\nint p(void) { return dnode_state(1) + (int)dnode_ip(1) + dnode_missed(1) + (int)dnode_node_id(1) + (int)DNODE_TABLE_BYTES; }\n' > "$B/p_ok.c"
+printf '#include "drpc.h"\nint p(void) { return dnode_table[1].state; }\n' > "$B/p_b0.c"
+printf '#include "drpc.h"\nint p(void) { int x;\n *&x = dnode_table[1].state; return x; }\n' > "$B/p_b1.c"
+printf '#include "drpc.h"\nint p(void) { DNODE *t = dnode_table; return t[1].state; }\n' > "$B/p_b2.c"
+printf '#include "drpc.h"\nint p(void) { return dnode_table [1].state; }\n' > "$B/p_b3.c"
+printf '#include "drpc.h"\nint p(void) { return (int)sizeof(dnode_table); }\n' > "$B/p_b4.c"
+if $CC $CF $INC -c "$B/p_ok.c" -o "$B/p_ok.o" 2> "$B/p_ok.txt"; then
+    echo "[unbounded-dnode] D2c door: a .c through dnode_state/ip/missed/node_id/DNODE_TABLE_BYTES compiles"
+else
+    echo "[unbounded-dnode] D2c FAIL: the door does not compile"; sed 's/^/    /' "$B/p_ok.txt" | head -4
+    d2c=1
+fi
+for b in b0 b1 b2 b3 b4; do
+    if $CC $CF $INC -c "$B/p_$b.c" -o "$B/p_$b.o" 2> "$B/p_$b.txt"; then
+        echo "[unbounded-dnode] D2c FAIL: $b names dnode_table outside the owners and still compiles"
+        d2c=1
+    elif grep -q poisoned "$B/p_$b.txt"; then
+        echo "[unbounded-dnode] D2c $b: refused by the compiler (poisoned)"
+    else
+        echo "[unbounded-dnode] D2c FAIL: $b did not compile, but not because of the poison:"; sed 's/^/    /' "$B/p_$b.txt" | head -3
+        d2c=1
+    fi
+done
+if [ "$d2c" = 0 ]; then
+    echo "[unbounded-dnode] D2c PASS: outside drpc.c/swim.c the compiler refuses dnode_table; the door works"
+else
     fails=$((fails + 1))
 fi
 if [ "$fails" -eq 0 ]; then echo "[unbounded-dnode] ALL PASS"; else echo "[unbounded-dnode] RED ($fails)"; fi

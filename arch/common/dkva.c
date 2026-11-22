@@ -328,7 +328,7 @@ static BOOL have_remote_region(void)
 {
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        if (dnode_state(n) != DNODE_ALIVE) continue;
         if (!region_is_member(n)) return TRUE;
     }
     return FALSE;
@@ -468,7 +468,7 @@ static void cagg_start(UB o, const DKVA_Q_PKT *qpkt, const DKVA_RESP_PKT *self_p
     for (UB n = 0; n < DNODE_MAX; n++) { cs->exp[n] = 0; cs->got[n] = 0; }
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        UB st = dnode_table[n].state;
+        UB st = dnode_state(n);
         if (st != DNODE_ALIVE && st != DNODE_SUSPECT) continue;
         if (!region_is_member(n)) continue;
         cs->exp[n] = 1;
@@ -507,7 +507,7 @@ static void cagg_step(void)
      * 同じ quorum_core(exp,got,alive) を完了判定に使う。 */
     UB alive[DNODE_MAX];
     for (UB n = 0; n < DNODE_MAX; n++)
-        alive[n] = (UB)(dnode_table[n].state != DNODE_DEAD);
+        alive[n] = (UB)(dnode_state(n) != DNODE_DEAD);
     for (UH s = 0; s < (UH)DREGION_MAX; s++) {
         if (!g_cagg.origins.used[s]) continue;
         DKVA_CAGG_SLOT *cs = &g_cagg.slot[s];
@@ -683,7 +683,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         static UB  ec_member[DNODE_MAX];
         static INT ec_region[DNODE_MAX];
         for (UB n = 0; n < DNODE_MAX; n++) {
-            ec_state[n]  = dnode_table[n].state;
+            ec_state[n]  = dnode_state(n);
             ec_member[n] = region_is_member(n) ? 1 : 0;
             ec_region[n] = world_peer_region_fresh(n);
         }
@@ -743,14 +743,14 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
         /* SWIM が待っている間に DEAD と判定したノードはもう待たない
          * (が degraded の分子には数えないので欠損として正直に残る)。 */
         for (UB n = 0; n < DNODE_MAX; n++) {
-            if (expect[n] && !got[n] && dnode_table[n].state == DNODE_DEAD) {
+            if (expect[n] && !got[n] && dnode_state(n) == DNODE_DEAD) {
                 expect[n] = 0;
                 dk_puts("[dkva] not waiting for node "); dk_putdec(n);
                 dk_puts(" (SWIM: DEAD)\r\n");
             }
             /* gossip 未確認のまま死んだ remote はもう不確実枠でも待たない
              * (生存していないので uncertain として明示する意味も無い)。 */
-            if (uncertain[n] && dnode_table[n].state == DNODE_DEAD) {
+            if (uncertain[n] && dnode_state(n) == DNODE_DEAD) {
                 uncertain[n] = 0; uncertain_cnt--;
             }
         }
@@ -766,7 +766,7 @@ ER dkva_infer(const float Q[DKVA_SEQ][DKVA_NH][DKVA_DH],
             for (UB n = 0; n < DNODE_MAX; n++) {
                 if (expect[n] && !got[n]) pending++;
                 if (rc_expect[n] && !rgot[n] &&
-                    dnode_table[n].state != DNODE_DEAD) pending++;
+                    dnode_state(n) != DNODE_DEAD) pending++;
             }
             if (pending == 0) break;
         }

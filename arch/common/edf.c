@@ -116,7 +116,7 @@ static pk_node_t pick_best_node(W deadline_ms)
     UB best_load = local;
     for (UB n = 0; n < DNODE_MAX; n++) {
         if (n == drpc_my_node) continue;
-        if (dnode_table[n].state != DNODE_ALIVE) continue;
+        if (dnode_state(n) != DNODE_ALIVE) continue;
         if (peer_load[n] < best_load) {
             best_load = peer_load[n];
             best      = n;
@@ -214,7 +214,7 @@ void edf_load_task(INT stacd, void *exinf)
         /* 新たに ALIVE になったピアのサブスクライバを動的に開く */
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node || sub_h[n] >= 0) continue;
-            if (dnode_table[n].state == DNODE_ALIVE) {
+            if (dnode_state(n) == DNODE_ALIVE) {
                 char tn[5];
                 load_topic_name(tn, n);
                 sub_h[n] = kdds_open(tn, KDDS_QOS_LATEST_ONLY);
@@ -254,7 +254,7 @@ void edf_stat(void)
     if (drpc_my_node != 0xFF) {
         ed_puts("[edf] ===== ノード負荷 (0-100%) =====\r\n");
         for (UB n = 0; n < DNODE_MAX; n++) {
-            UB st = dnode_table[n].state;
+            UB st = dnode_state(n);
             if (n == drpc_my_node) {
                 ed_puts("  node "); ed_putdec(n);
                 ed_puts(" (self) load="); ed_putdec(peer_load[n]); ed_puts("%\r\n");
