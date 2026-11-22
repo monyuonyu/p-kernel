@@ -39,6 +39,9 @@
 #   -DN2C_NC_CLAIM_ONCE -> I6u (added 11-21 after audit-208: the smaller redraws on one hearing
 #        past the 10 s, as before; a larger that redrew at once was not yet heard under its new id
 #        and its old key came past the 10 s, so both redrew. Now once more 7 s after that)
+#   -DN2C_NC_WAS_SECOND -> I6u (added 11-23: a third node's news carries the previous key in
+#        the 2nd and 4th news after a change, as before; while both keep talking each change
+#        starts the count again and the previous key never goes out = the larger is not told)
 # Not checked here (limits, §11): that a teaching (X3) is not mixed up between A and B;
 # narrow ids (no key on the v1 wire); Android and Windows (no re-exec: the new id from the
 # next start).
@@ -57,7 +60,7 @@ unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AU
 export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 PORT="${N2C_WIDE_PORT:-7495}"
 REL="$ROOT/relay/relay"
-MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS N2C_NC_NO_MOVED N2C_NC_CLAIM_ONCE}"
+MODES="${N2C_WIDE_MODES:-plain N2C_NC_NO_REDRAW N2C_NC_REDRAW_VOLATILE N2C_NC_NO_PIN N2C_NC_NONCE_COUNT N2C_NC_SMALL_NEVER N2C_NC_NO_WAS N2C_NC_NO_MOVED N2C_NC_CLAIM_ONCE N2C_NC_WAS_SECOND}"
 if [ -n "${N2C_WORK:-}" ]; then
     WORK="$N2C_WORK"; mkdir -p "$WORK"
 else
@@ -228,6 +231,7 @@ for md in $MODES; do
         N2C_NC_NO_WAS)          want=I6u ;;   # 11-21: the news carries no previous key (idpin)
         N2C_NC_NO_MOVED)        want=I6u ;;   # 11-21 audit-207: a key heard under another id claims my id (idpin)
         N2C_NC_CLAIM_ONCE)      want=I6u ;;   # 11-21 (after audit-208): one hearing past the 10 s redraws the smaller (idpin)
+        N2C_NC_WAS_SECOND)      want=I6u ;;   # 11-23: the previous key in the 2nd news, never sent while both talk (idpin)
         *) echo "[n2c-wide] unknown mode $md"; FAIL=1; continue ;;
     esac
     suite "$md" "-D$md"
