@@ -448,9 +448,14 @@ static void q5(uint32_t G)
      * candidate is an st_init_tier model, w g mu vu (4 x n_params floats), held
      * with the three peers' header + w; audit-219 measured 12 MB more than a
      * count of bs (w mu vu) */
+#if defined(B5M_NC_CAND) || defined(B5R_NC_FULL_PEER) || defined(B5W_NC_MEAN)
     size_t floor_ = 3u * wsz + 4u * np * sizeof(float);
+#else
+    /* B5 q8 3 (research/b5-merge-mem.md §2 1): the candidate is a w only */
+    size_t floor_ = 3u * wsz + np * sizeof(float);
+#endif
     printf("  Q5: M counted %zu, the merge phase allocates at least %zu\n", got, floor_);
-    check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's 4 x n_params floats)");
+    check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's arrays)");
     tab_free(&tq);
     for (int k = 0; k < K; k++) st_free(&mk[k]);
     /* L, seven peers that do not answer: the buffers are had before the first fetch */
