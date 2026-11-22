@@ -3630,6 +3630,8 @@ jobs:
       # judgement seeds (W1 W2, NC_MEAN) are not here (about an hour).
       # B5 q8 (research/b5-q8-copy.md): Q0 Q4 (the int8 copy BRG2; Q4 makes an
       # L model, about 0.6 GB), the falsifier INT2T red on Q0 only.
+      # B5 q8 3 (research/b5-merge-mem.md): Q7, an L round that merges seven
+      # peers (about 3 minutes, 1.4 GB), the falsifier CAND red on Q7 only.
       - name: B5 wire stage 1 unit ([b5w-W0] [b5w-W3..W6], falsifiers NO_GEN on W4 and NO_GATE on W6; [b5q-Q0] [b5q-Q4])
         run: B5W_MODE=unit bash tests/llm/run_b5_wire.sh
       # RG-FETCH (research/b5-recv-mem.md §6): the round's fetch buffer
