@@ -840,7 +840,14 @@ INT kdds_wide_self_test(void (*emit)(const char *))
 /*   [sub]   kdds_sub still gives the last one, every time               */
 /*   [two]   a second next-reader also gets 1 2 3                        */
 /*   [rx]    three kdds_rx in a row (as net_task hands them) -> 4 5 6    */
-/*   [over]  40 in a row: increasing, ends at the 40th, drops counted    */
+/*   [over]  KDDS_Q_N + 8 in a row: increasing, ends at the last, drops  */
+/*           counted (40 while KDDS_Q_N was 32)                          */
+/*   [starve] (2026-11-22, audit-216) a reader that misses 4 ticks: per   */
+/*           tick 8 received on one topic (a paced peer's announces) and */
+/*           8 published on another (its own WANTs), 64 kept unread ->    */
+/*           all 64 read, 0 dropped. Under host starvation node 2 of      */
+/*           run_pfs_origin_send.sh lost 6-14 announces in the ring (32)  */
+/*           = the blocks it never fetched (probe, 9 of 9 runs)           */
 /* Falsifier: -DKDDS_NC_NO_QUEUE ([pub] [two] [rx] red).                */
 /* ------------------------------------------------------------------ */
 static void kq_rx_one(const char *name, UB v)
@@ -893,14 +900,43 @@ INT kdds_queue_self_test(void (*emit)(const char *))
     if (!ok) { say("[kdds-queue] FAIL rx (three received in a row did not come back 4 5 6)\r\n"); fails++; }
     (void)kdds_sub_next(h2, b, 4); (void)kdds_sub_next(h2, b, 4); (void)kdds_sub_next(h2, b, 4);
     UW d0 = kdds_queue_dropped(h1);
-    for (UB v = 11; v <= 50; v++) kdds_pub(hp, &v, 1);
+    const W OVER_N = KDDS_Q_N + 8;              /* UB values 11 .. 10 + OVER_N (<= 255) */
+    for (W v = 11; v <= 10 + OVER_N; v++) { UB x = (UB)v; kdds_pub(hp, &x, 1); }
     ok = 1; INT got = 0; UB prev = 0, lastv = 0;
-    for (;;) { b[0] = 0; W r = kdds_sub_next(h1, b, 4); if (r == 0) break; if (r != 1 || b[0] <= prev) ok = 0; prev = lastv = b[0]; got++; if (got > 60) break; }
+    for (;;) { b[0] = 0; W r = kdds_sub_next(h1, b, 4); if (r == 0) break; if (r != 1 || b[0] <= prev) ok = 0; prev = lastv = b[0]; got++; if (got > OVER_N + 20) break; }
     UW dr = kdds_queue_dropped(h1) - d0;
-    if (!ok || lastv != 50 || got < KDDS_Q_N || got > KDDS_Q_N + 1 || dr == 0) {
-        say("[kdds-queue] FAIL over (40 in a row: not increasing to 50, or no drop counted)\r\n"); fails++;
+    if (!ok || lastv != (UB)(10 + OVER_N) || got < KDDS_Q_N || got > KDDS_Q_N + 1 || dr == 0) {
+        say("[kdds-queue] FAIL over (KDDS_Q_N + 8 in a row: not increasing to the last, or no drop counted)\r\n"); fails++;
     }
-    kd_puts("[kdds-queue] over: read "); kd_putdec((UW)got); kd_puts(" of 40, dropped "); kd_putdec(dr); kd_puts("\r\n");
+    kd_puts("[kdds-queue] over: read "); kd_putdec((UW)got); kd_puts(" of "); kd_putdec((UW)OVER_N);
+    kd_puts(", dropped "); kd_putdec(dr); kd_puts("\r\n");
+    /* [starve]: h2 and h1 read to the end first (their old messages would count as drops) */
+    for (INT k = 0; k < 2 * KDDS_Q_N + 16 && kdds_sub_next(h2, b, 4) != 0; k++) { }
+    for (INT k = 0; k < 2 * KDDS_Q_N + 16 && kdds_sub_next(h1, b, 4) != 0; k++) { }
+    {
+        const char *NB = "test/kqueue2";
+        W hbp = kdds_open_poll(NB, KDDS_QOS_LATEST_ONLY), hb = kdds_open_poll(NB, KDDS_QOS_LATEST_ONLY);
+        if (hbp < 0 || hb < 0) {
+            say("[kdds-queue] FAIL starve (open)\r\n"); fails++;
+        } else {
+            (void)kdds_sub_next(hb, b, 4);       /* starts reading: nothing yet */
+            UW da0 = kdds_queue_dropped(h1), db0 = kdds_queue_dropped(hb);
+            UB va = 100, vb = 100;
+            for (INT t = 0; t < 4; t++)          /* 4 ticks the reader did not run */
+                for (INT j = 0; j < 8; j++) { kq_rx_one(NM, ++va); vb++; kdds_pub(hbp, &vb, 1); }
+            INT ga = 0, gb = 0; UB pa = 0, pb = 0; ok = 1;
+            for (INT k = 0; k < 80; k++) { b[0] = 0; W r = kdds_sub_next(h1, b, 4); if (r == 0) break; if (r != 1 || b[0] <= pa) ok = 0; pa = b[0]; ga++; }
+            for (INT k = 0; k < 80; k++) { b[0] = 0; W r = kdds_sub_next(hb, b, 4); if (r == 0) break; if (r != 1 || b[0] <= pb) ok = 0; pb = b[0]; gb++; }
+            UW sd = (kdds_queue_dropped(h1) - da0) + (kdds_queue_dropped(hb) - db0);
+            kd_puts("[kdds-queue] starve: read "); kd_putdec((UW)ga); kd_puts(" + "); kd_putdec((UW)gb);
+            kd_puts(" of 32 + 32, dropped "); kd_putdec(sd); kd_puts("\r\n");
+            if (!ok || ga != 32 || gb != 32 || sd != 0) {
+                say("[kdds-queue] FAIL starve (a reader 4 ticks behind a paced peer and its own pubs lost some)\r\n"); fails++;
+            }
+        }
+        if (hbp >= 0) kdds_close(hbp);
+        if (hb >= 0) kdds_close(hb);
+    }
     kdds_close(hp); kdds_close(h1); kdds_close(h2);
     drpc_my_node = saved_my;
     if (fails == 0) say("[kdds-queue] PASS (unread messages kept and read oldest first; kdds_sub unchanged)\r\n");
