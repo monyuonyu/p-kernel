@@ -12,7 +12,8 @@ before a merge, run every job this tool names (or say why not).
   --direct (first)  no includer closure: only jobs whose text or scripts name a
                     changed file itself (the short list to run by hand first)
 
-How (a heuristic, it may name too many, it must not name too few for scripts):
+How (a heuristic: it names too many for common basenames like run.sh, and too
+few where a script is not followed, see "Not followed" below):
   1. the changed files; a changed header pulls in, by #include "<basename>",
      every .c/.h of the tree that includes it (closure over headers)
   2. a job is named when its run: text, or a tests/... script that text names
@@ -20,6 +21,11 @@ How (a heuristic, it may name too many, it must not name too few for scripts):
      its repo path or by its basename
 Jobs that build whole trees with make (crown, UMP, ...) are named only when
 their text mentions a file; build_all.sh is the net for those (say it ran).
+Not followed (audit-215, measured on the 2026-11-22 tree): scripts outside
+tests/ and tools/ (samples/*/run.sh: 32 jobs name one), names relative to a
+cd (cd tests/llm && bash run_kv.sh), and $HERE/<script> inside a script (48).
+A live job that runs a make-built binary (e.g. belief-revision-live and
+r3_incontext.c) is not named: the short list is a floor, not the whole set.
 No PyYAML: the job blocks are cut by indentation (2 spaces = a job id under jobs:).
 """
 import os, re, subprocess, sys
