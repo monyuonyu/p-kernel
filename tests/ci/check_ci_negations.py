@@ -14,8 +14,7 @@ command of the block and has no '||'. Other negated commands ('! cmd > log'
 followed by greps of that log) are not judged here.
 Usage: check_ci_negations.py [repo [workflow]] | --selftest
 """
-import os, sys
-import yaml
+import os, re, sys
 
 
 def commands(run):
@@ -35,18 +34,36 @@ def commands(run):
     return out
 
 
+RUN = re.compile(r'^(\s*)(?:- )?run:\s*[|>][-+]?\s*$')
+
+
+def blocks(text):
+    """(line number, block text) of every block-scalar run: (no YAML library: the
+    CI image need not have one). A block is the lines indented deeper than the
+    run: key, blank lines included. A one-line run: is one command = always last."""
+    ls = text.split('\n')
+    i = 0
+    while i < len(ls):
+        m = RUN.match(ls[i])
+        if not m:
+            i += 1
+            continue
+        key = len(m.group(1)) + (2 if ls[i].lstrip().startswith('- ') else 0)
+        body, j = [], i + 1
+        while j < len(ls) and (not ls[j].strip() or len(ls[j]) - len(ls[j].lstrip()) > key):
+            body.append(ls[j])
+            j += 1
+        yield i + 1, '\n'.join(body)
+        i = j
+
+
 def check(text):
-    y = yaml.safe_load(text) or {}
     bad = []
-    for jn, j in (y.get('jobs') or {}).items():
-        for s in j.get('steps') or []:
-            run = s.get('run')
-            if not isinstance(run, str):
-                continue
-            cs = commands(run)
-            for i, c in enumerate(cs):
-                if c.startswith('! grep') and i != len(cs) - 1 and '||' not in c:
-                    bad.append((jn, s.get('name', ''), c))
+    for ln, run in blocks(text):
+        cs = commands(run)
+        for i, c in enumerate(cs):
+            if c.startswith('! grep') and i != len(cs) - 1 and '||' not in c:
+                bad.append(('line %d' % ln, 'run block', c))
     return bad
 
 
