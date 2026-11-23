@@ -347,6 +347,7 @@ static void qdf(st_model *n, uint32_t G)
     t.b[K] = wrap_q8(&x, G, &t.n[K]);
     st_free(&x);
     memcpy((uint8_t *)t.b[2] + ST_RG_HDR + 40, &huge, sizeof huge);   /* node 2's first row scale */
+    ((uint8_t *)t.b[2])[ST_RG_HDR + 40 + 4] = 127;   /* and its first value: an int2 copy (nq8) has a row of 0s there */
     const uint16_t all4[4] = { 0, 1, 2, 3 }, all5[5] = { 0, 1, 2, 3, 4 };
     st_model a; st_rg_report r;
     clone(&a, &n[0]);
