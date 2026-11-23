@@ -2204,15 +2204,21 @@ size_t st_blob_size(const st_model *m)
 /* 1 if all of w, mu and vu (everything st_save writes as floats) are finite.
  * A loss cannot say this: a weight in the row of a byte the text never holds
  * does not reach the loss (student_nan_test.c [gate-unused-nan]). */
+/* B5 q8 3 (research/b5-merge-mem.md §2 3): one array, the same bit test; a
+ * NULL array (a candidate without moments, read as 0) is finite */
+static int st_arr_finite(const float *a, int n)
+{
+    if (!a) return 1;
+    for (int i = 0; i < n; i++) {
+        ST_F32 v; v.f = a[i];
+        if ((v.u & 0x7F800000U) == 0x7F800000U) return 0;
+    }
+    return 1;
+}
 int st_model_finite(const st_model *m)
 {
-    const float *a[3] = { m->w, m->mu, m->vu };
-    for (int k = 0; k < 3; k++)
-        for (int i = 0; i < m->n_params; i++) {
-            ST_F32 v; v.f = a[k][i];
-            if ((v.u & 0x7F800000U) == 0x7F800000U) return 0;
-        }
-    return 1;
+    return st_arr_finite(m->w, m->n_params) && st_arr_finite(m->mu, m->n_params)
+        && st_arr_finite(m->vu, m->n_params);
 }
 
 PK_NOSW_FN(long, st_save, (const st_model *m, void *buf, size_t cap), (m, buf, cap))
@@ -2498,20 +2504,36 @@ int st_merge_trimmed(st_model *into, const void *const *peer_blobs,
 {
     return st_merge_trimmed_need(into, peer_blobs, peer_lens, count, t, into ? st_blob_size(into) : 0);
 }
+/* B5 q8 3 (research/b5-merge-mem.md §2 2): the trimmed mean into w (in place,
+ * w is the self member), the shape and the peers' checks from `shape`. The
+ * moments are the caller's: st_merge_trimmed_need zeroes into's when it
+ * returns > 0, st_region_round's candidate has none. */
+static int st_trim_core(const st_model *shape, float *w, const void *const *peer_blobs,
+                        const size_t *peer_lens, int count, int t, size_t need);
 static int st_merge_trimmed_need(st_model *into, const void *const *peer_blobs,
                                  const size_t *peer_lens, int count, int t, size_t need)
 {
     if (!into || !into->w) return ST_E_ARG;
+    int accepted = st_trim_core(into, into->w, peer_blobs, peer_lens, count, t, need);
+    if (accepted <= 0) return accepted;
+    for (int i = 0; i < into->n_params; i++) { into->mu[i] = 0.0f; into->vu[i] = 0.0f; }
+    into->adam_t = 0;
+    return accepted;
+}
+static int st_trim_core(const st_model *shape, float *w, const void *const *peer_blobs,
+                        const size_t *peer_lens, int count, int t, size_t need)
+{
+    if (!shape || !w) return ST_E_ARG;
     if (count < 0 || count > ST_COHORT_MAX || t < 1) return ST_E_ARG;
     if (count > 0 && (!peer_blobs || !peer_lens)) return ST_E_ARG;
 #if defined(B5S5_TRIM_OFF)                  /* NC1 of the design: the same function, every value averaged */
     t = 0;
 #endif
-    int np = into->n_params;
+    int np = shape->n_params;
     int accepted = 0;
     uint64_t take = 0;
     for (int k = 0; k < count; k++) {
-        if (!st_blob_hdr_need_ok(into, peer_blobs[k], peer_lens[k], need)) continue;
+        if (!st_blob_hdr_need_ok(shape, peer_blobs[k], peer_lens[k], need)) continue;
 #ifndef ST_MERGE_NO_FINITE
         if (!st_blob_w_finite(peer_blobs[k], np)) continue;
 #endif
@@ -2524,10 +2546,10 @@ static int st_merge_trimmed_need(st_model *into, const void *const *peer_blobs,
     if (n < 2 * t + 2) return 0;
     float v[ST_COHORT_MAX + 1];
 #ifndef ST_MERGE_NO_FINITE
-    if (!st_w_finite(into->w, np)) return 0;
+    if (!st_w_finite(w, np)) return 0;
     for (int i = 0; i < np; i++) {          /* the middle can still sum to Inf: look first */
         int m = 0;
-        v[m++] = into->w[i];
+        v[m++] = w[i];
         for (int k = 0; k < count; k++)
             if (take >> k & 1) v[m++] = st_blob_w_at(peer_blobs[k], (size_t)i);
         if (st_bad_f(st_trim_one(v, m, t))) return 0;
@@ -2535,13 +2557,11 @@ static int st_merge_trimmed_need(st_model *into, const void *const *peer_blobs,
 #endif
     for (int i = 0; i < np; i++) {
         int m = 0;
-        v[m++] = into->w[i];
+        v[m++] = w[i];
         for (int k = 0; k < count; k++)
             if (take >> k & 1) v[m++] = st_blob_w_at(peer_blobs[k], (size_t)i);
-        into->w[i] = st_trim_one(v, m, t);
+        w[i] = st_trim_one(v, m, t);
     }
-    for (int i = 0; i < np; i++) { into->mu[i] = 0.0f; into->vu[i] = 0.0f; }
-    into->adam_t = 0;
     return accepted;
 }
 
@@ -2575,6 +2595,29 @@ static int st_round_trimmed_need(st_model *into, uint32_t gen,
         n++;
     }
     return st_merge_trimmed_need(into, take, len, n, t, need);
+}
+/* B5 q8 3 (research/b5-merge-mem.md §2 2): st_round_trimmed_need into a bare
+ * w (no moments; the caller reads them as 0), the same gen filter */
+static int st_round_trimmed_w(const st_model *shape, float *w, uint32_t gen,
+                              const void *const *peer_blobs, const size_t *peer_lens,
+                              const uint32_t *gens, int count, int t, size_t need)
+{
+    if (!shape || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
+    if (count > 0 && (!peer_blobs || !peer_lens || !gens)) return ST_E_ARG;
+    const void *take[ST_COHORT_MAX];
+    size_t len[ST_COHORT_MAX];
+    int n = 0;
+    for (int k = 0; k < count; k++) {
+#ifndef ST_ROUND_NO_GEN
+        if (gens[k] != gen) continue;
+#else
+        (void)gen; (void)gens;
+#endif
+        take[n] = peer_blobs[k];
+        len[n]  = peer_lens[k];
+        n++;
+    }
+    return st_trim_core(shape, w, take, len, n, t, need);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2835,14 +2878,26 @@ static int st_merge_trust_core(st_model *into, const st_model *prev,
     return accepted;
 }
 
+/* B5 q8 3 (research/b5-merge-mem.md §2 3): the gate on cand's w (evaluated as
+ * the model cand), its moments cmu, cvu (NULL = 0) and adam_t cadam */
+static int st_round_adopt_core(st_model *live, st_model *cand, const float *cmu, const float *cvu,
+                               int cadam, const uint8_t *bytes, int n, int seq,
+                               float *live_loss, float *cand_loss);
 int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
                    int n, int seq, float *live_loss, float *cand_loss)
 {
     if (!live || !cand || !bytes || seq < 2 || n < seq) return ST_E_ARG;
     if (cand->tier != live->tier || cand->n_params != live->n_params) return ST_E_ARG;
+    return st_round_adopt_core(live, cand, cand->mu, cand->vu, cand->adam_t, bytes, n, seq, live_loss, cand_loss);
+}
+static int st_round_adopt_core(st_model *live, st_model *cand, const float *cmu, const float *cvu,
+                               int cadam, const uint8_t *bytes, int n, int seq,
+                               float *live_loss, float *cand_loss)
+{
     double ls = 0.0, cs = 0.0;
     int got = 0;
-    int fin = st_model_finite(cand);
+    int fin = st_arr_finite(cand->w, cand->n_params) && st_arr_finite(cmu, cand->n_params)
+           && st_arr_finite(cvu, cand->n_params);
     for (int o = 0; o + seq <= n; o += seq) {
         int a = 0, b = 0;
         ls += st_eval_loss(live, bytes + o, seq, &a);
@@ -2864,9 +2919,9 @@ int st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
     if (!take) return 0;
     PK_NOSW_ENTER();
     for (int i = 0; i < live->n_params; i++) {
-        live->w[i] = cand->w[i]; live->mu[i] = cand->mu[i]; live->vu[i] = cand->vu[i];
+        live->w[i] = cand->w[i]; live->mu[i] = cmu ? cmu[i] : 0.0f; live->vu[i] = cvu ? cvu[i] : 0.0f;
     }
-    live->adam_t = cand->adam_t;
+    live->adam_t = cadam;
     PK_NOSW_LEAVE();
     return 1;
 }
@@ -3098,7 +3153,49 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     if (fb) st_rg_drop(fcap);
     r0.members += 1;                     /* self */
     r0.same_gen = nb + 1;
-    if (nb > 0) {
+#if defined(B5M_NC_CAND)
+    const int light = 0;                 /* falsifier (Q7): the whole candidate model as before */
+#else
+    const int light = !full;
+#endif
+    if (nb > 0 && light) {
+        /* B5 q8 3 (research/b5-merge-mem.md §2): the candidate is a w only (the
+         * merge zeroes the moments, g is never read), merged in place as before;
+         * the gate sees it through a view of live's shape with its own cache */
+        size_t np = (size_t)live->n_params;
+        float *cw = (float *)malloc(np * sizeof(float));
+        if (cw) {
+            st_rg_hold(np * sizeof(float));
+            int ok = 1;
+            PK_NOSW_ENTER();
+#ifndef ST_MERGE_NO_FINITE
+            ok = st_w_finite(live->w, (int)np) && st_w_finite(live->mu, (int)np) && st_w_finite(live->vu, (int)np);
+#endif
+            if (ok) for (size_t i = 0; i < np; i++) cw[i] = live->w[i];
+            PK_NOSW_LEAVE();
+            if (ok) {
+                int acc = st_round_trimmed_w(live, cw, gen, bs, ls, gs, nb, 1, wsz);
+                r0.accepted = acc > 0 ? acc : 0;
+                if (acc > 0) {
+                    st_model v = *live;
+                    v.w = cw; v.g = NULL; v.mu = NULL; v.vu = NULL; v.adam_t = 0;
+                    v.alive = NULL; v.cache = NULL; v.mem = NULL;
+#if defined(B5W_NC_NO_GATE)
+                    PK_NOSW_ENTER();
+                    for (size_t i = 0; i < np; i++) { live->w[i] = cw[i]; live->mu[i] = 0.0f; live->vu[i] = 0.0f; }
+                    live->adam_t = 0;
+                    PK_NOSW_LEAVE();
+                    ret = 1;
+#else
+                    int a = st_round_adopt_core(live, &v, NULL, NULL, 0, bytes, n, seq, &r0.held_live, &r0.held_cand);
+                    ret = a == 1 ? 1 : 0;
+#endif
+                    free(v.cache);
+                }
+            }
+            free(cw);
+        }
+    } else if (nb > 0) {
         st_model cand;
         if (st_init_tier(&cand, 1u, live->tier) == ST_OK) {
             /* the candidate as st_init_tier allocates it: w g mu vu (RG-FETCH,

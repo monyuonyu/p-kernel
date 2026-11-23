@@ -29,6 +29,9 @@
 #   B5W_MODE=q8 runs the judgement seeds 261..268 (B5W_Q8_SEEDS), stage q8,
 #   on plain and nq8, judge b5q8_check.py (Q1 Q2 Q3 and the NC)
 #   -DB5Q_NC_INT2T    the copy is the int2 per-tensor grid  -> Q0 red (unit), Q2 red (judge)
+# B5 q8 3 (research/b5-merge-mem.md §3): q7 (an L round merging seven peers,
+# about 3 minutes and 1.4 GB, plain and its falsifier only);
+#   -DB5M_NC_CAND     the candidate model as before             -> Q7 red
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -89,6 +92,7 @@ build nolatch -DB5W_NC_NO_LATCH   # D6b (research/b5-m-round.md §10): W14 red
 build nomom  -DB5W_NC_SEND_MOMENTS   # B5 ⓪ (research/b5-m-default.md §3 2): W15 red
 build nq8    -DB5Q_NC_INT2T          # B5 q8 (research/b5-q8-copy.md §4): Q0 red, Q2 red
 build nfull  -DB5R_NC_FULL_PEER      # B5 q8 2 (research/b5-recv-mem.md §3): Q5 red
+build ncand  -DB5M_NC_CAND           # B5 q8 3 (research/b5-merge-mem.md §3): Q7 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -115,6 +119,15 @@ nc nq8 b5q-Q0
 nc nfull b5r-Q5
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
+# Q7 (research/b5-merge-mem.md §3): its own entry, plain and the falsifier only
+"$WORK/bin-plain" q7 > "$OUT/q7-plain.log" 2>&1; rc=$?
+grep -E '^  (PASS|FAIL) |^  Q7' "$OUT/q7-plain.log"
+if [ "$rc" -eq 0 ]; then echo "[b5-wire] q7 plain: PASS"; else echo "[b5-wire] q7 plain: FAIL (rc=$rc)"; fail=1; fi
+"$WORK/bin-ncand" q7 > "$OUT/q7-ncand.log" 2>&1
+red="$(grep '^  FAIL  ' "$OUT/q7-ncand.log" | sed 's/^  FAIL  \[\([^]]*\)\].*/\1/' | sort -u | tr '\n' ' ')"
+if [ "$red" = "b5m-Q7 " ] && grep -q '^  PASS  \[b5m-Q7\] precondition' "$OUT/q7-ncand.log"; then
+    echo "[b5-wire] falsifier ncand: red on b5m-Q7 only, the precondition green (as it must)"
+else echo "[b5-wire] falsifier ncand: FAIL, red on '${red}', want 'b5m-Q7' with the precondition green"; fail=1; fi
 if [ "${B5W_MODE:-}" = unit ]; then
     if [ "$fail" = 0 ]; then echo "[result] PASS  b5-wire unit"; exit 0; fi
     echo "[result] FAIL  b5-wire unit"; exit 1

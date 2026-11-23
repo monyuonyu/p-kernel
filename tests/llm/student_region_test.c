@@ -448,9 +448,14 @@ static void q5(uint32_t G)
      * candidate is an st_init_tier model, w g mu vu (4 x n_params floats), held
      * with the three peers' header + w; audit-219 measured 12 MB more than a
      * count of bs (w mu vu) */
+#if defined(B5M_NC_CAND) || defined(B5R_NC_FULL_PEER) || defined(B5W_NC_MEAN)
     size_t floor_ = 3u * wsz + 4u * np * sizeof(float);
+#else
+    /* B5 q8 3 (research/b5-merge-mem.md §2 1): the candidate is a w only */
+    size_t floor_ = 3u * wsz + np * sizeof(float);
+#endif
     printf("  Q5: M counted %zu, the merge phase allocates at least %zu\n", got, floor_);
-    check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's 4 x n_params floats)");
+    check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's arrays)");
     tab_free(&tq);
     for (int k = 0; k < K; k++) st_free(&mk[k]);
     /* L, seven peers that do not answer: the buffers are had before the first fetch */
@@ -462,6 +467,37 @@ static void q5(uint32_t G)
     check(rl == 0 && rp.members == 8 && rp.fetched == 0, "b5r-Q5", "precondition: the L round asked seven peers, none answered");
     check(got > 0 && got <= 700000000u, "b5r-Q5", "L, seven peers: the round holds <= 700 MB");
     st_free(&l);
+}
+
+/* ---- B5 q8 3 (research/b5-merge-mem.md §3): Q7, an L round whose seven peers
+ * answer and are merged. Its own entry (q7, about 3 minutes, 1.4 GB): the unit
+ * runs once per falsifier build. ---- */
+static int q7(void)
+{
+    printf("=== [b5-merge-mem] q7 (research/b5-merge-mem.md §3) ===\n");
+    if (!have_q8() || !st_rg_test_bytes) { check(0, "b5m-Q7", "st_rg_wrap_q8 / st_rg_test_bytes are not there"); return 1; }
+    const uint32_t G = 5;
+    tab_t t; memset(&t, 0, sizeof t);
+    for (int k = 1; k <= 7; k++) {               /* one L model at a time, kept as its q8 copy */
+        st_model p;
+        if (st_init_tier(&p, 300u + (uint32_t)k, ST_TIER_L) != 0) { check(0, "b5m-Q7", "precondition: an L peer"); return 1; }
+        t.b[k] = wrap_q8(&p, G, &t.n[k]);
+        st_free(&p);
+    }
+    st_model l;
+    if (st_init_tier(&l, 7u, ST_TIER_L) != 0) { check(0, "b5m-Q7", "precondition: the L live"); return 1; }
+    const uint16_t eight[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    st_rg_report rp;
+    int r = round_on(&l, G, 0, eight, 8, tab_fetch, &t, &rp); say("Q7 L", r, &rp);
+    size_t got = st_rg_test_bytes();
+    printf("  Q7: L seven peers merged, held %zu bytes (line 700000000; header+w %zu)\n",
+           got, st_rg_w_size(&l));
+    check(rp.fetched == 7 && rp.accepted == 7, "b5m-Q7", "precondition: the L round fetched and merged its seven peers");
+    check(got > 0 && got <= 700000000u, "b5m-Q7", "L, seven peers merged: the round holds <= 700 MB");
+    st_free(&l);
+    tab_free(&t);
+    printf("  [b5-merge-mem] q7 %s\n", fails ? "FAIL" : "PASS");
+    return fails ? 1 : 0;
 }
 
 static int unit(void)
@@ -668,7 +704,8 @@ int main(int argc, char **argv)
     lg = malloc((size_t)SEQ * ST_VOCAB * sizeof(float));
     if (!lg || fx_end < D) { printf("  FAIL  [b5w-io] setup (fx_end %d)\n", fx_end); return 1; }
     if (argc > 1 && strcmp(argv[1], "unit") == 0) return unit();
-    if (argc < 3) { fprintf(stderr, "usage: %s unit | <b1_held.txt> <seed> [all|w2]\n", argv[0]); return 2; }
+    if (argc > 1 && strcmp(argv[1], "q7") == 0) return q7();
+    if (argc < 3) { fprintf(stderr, "usage: %s unit | q7 | <b1_held.txt> <seed> [all|w2]\n", argv[0]); return 2; }
     uint32_t seed = (uint32_t)strtoul(argv[2], NULL, 10);
     FILE *f = fopen(argv[1], "rb"); if (!f) { perror(argv[1]); return 2; }
     hn = (int)fread(held, 1, sizeof held, f); fclose(f);
