@@ -3032,6 +3032,11 @@ uint64_t st_rg_latch_union(const st_rg_latch *l, uint32_t gen, uint64_t now)
  * st_save + st_load it replaces (the same finite check, the same bytes) without
  * a third copy of the model in between */
 static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *out, size_t cap, int full);
+static size_t st_q8_payload(const st_model *m);
+static int st_q8_payload_ok(const st_model *m, const void *q, size_t n);
+static int st_q8_merge(const st_model *shape, float *w, uint32_t gen,
+                       const void *const *peer, const size_t *lens, const uint8_t *kind,
+                       const uint32_t *gens, int count, int t, size_t need);
 static int st_rg_take_live(st_model *cand, const st_model *live)
 {
     int ok = 1;
@@ -3072,6 +3077,19 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     size_t wsz = st_rg_w_size(live), bsz = st_blob_size(live);
     size_t pcap = full ? bsz : wsz;
     size_t fcap = cap < ST_RG_FETCH_MAX ? cap : ST_RG_FETCH_MAX;
+    /* B5 q8 4 (research/b5-merge-q8direct.md §2): a BRG2 peer is kept as its
+     * payload (L 21 MB, was 82 MB decoded) and merged by st_q8_merge; a buffer
+     * starts at that size and grows to header + w for a BRG1 peer. Falsifier
+     * -DB5QD_NC_DECODE (and B5M_NC_CAND, whose candidate reads fp32 blobs):
+     * decoded to fp32 as before */
+#if defined(B5QD_NC_DECODE) || defined(B5M_NC_CAND)
+    const int keepq = 0;
+#else
+    const int keepq = !full;
+#endif
+    size_t qpl = st_q8_payload(live);
+    size_t psz[ST_COHORT_MAX];
+    uint8_t kq[ST_COHORT_MAX];
     void *buf[ST_COHORT_MAX];
     const void *bs[ST_COHORT_MAX];
     size_t ls[ST_COHORT_MAX];
@@ -3088,7 +3106,9 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     void *fb = npick > 0 ? malloc(fcap) : NULL;
     if (fb) st_rg_hold(fcap);
     for (int k = 0; k < npick; k++) {
-        buf[k] = (failn == k + 1 || !fb) ? NULL : malloc(pcap);
+        psz[k] = keepq ? qpl : pcap;
+        kq[k] = 0;
+        buf[k] = (failn == k + 1 || !fb) ? NULL : malloc(psz[k]);
         if (!buf[k]) {
             for (int q = 0; q < k; q++) free(buf[q]);
             free(fb);
@@ -3096,7 +3116,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
             if (rep) *rep = r0;
             return 0;
         }
-        st_rg_hold(pcap);
+        st_rg_hold(psz[k]);
     }
     /* fetch in a rotated order (from the first peer above self) so a region
      * does not all pull the lowest id first (M: node 0 sent 58,837 blocks,
@@ -3108,25 +3128,47 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
         int k = (rot + j) % npick;
         uint8_t *b = (uint8_t *)buf[k], *f = (uint8_t *)fb;
         int got = fetch(ctx, pick[k], fb, fcap);
-        if (got < ST_RG_HDR || (size_t)got > fcap) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
+        if (got < ST_RG_HDR || (size_t)got > fcap) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }
         r0.fetched++;
         uint32_t h[4];
         for (size_t i = 0; i < sizeof h; i++) ((uint8_t *)h)[i] = f[i];
         int q8 = h[0] == ST_RG_MAGIC2;   /* B5 q8: BRG2, int8 rows; BRG1 still read */
 #if defined(B5W_NC_NO_LEN)
-        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > fcap - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }  /* falsifier */
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] > fcap - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }  /* falsifier */
 #else
-        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
+        if ((h[0] != ST_RG_MAGIC && !q8) || (size_t)h[2] != (size_t)got - ST_RG_HDR) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }
 #endif
 #if defined(B5W_NC_NO_GEN)
         h[1] = gen;                      /* falsifier: the generation is not read */
 #endif
-        if (h[1] != gen) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
-        if (q8) {
+        if (h[1] != gen) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }
+        if (!q8 && keepq && psz[k] < wsz) {
+            /* a BRG1 peer: its header + w; a buffer that can not grow refuses
+             * the round, as one that could not be had (§2 5) */
+            void *g2 = realloc(b, wsz);
+            if (!g2) {
+                for (int q = 0; q < npick; q++) free(buf[q]);
+                free(fb);
+                r0.members += 1;
+                if (rep) *rep = r0;
+                return 0;
+            }
+            st_rg_hold(wsz - psz[k]);
+            psz[k] = wsz;
+            b = (uint8_t *)g2; buf[k] = g2;
+        }
+        if (q8 && keepq) {
+            /* the same checks as st_q8_open_to (the length, the header, every
+             * row scale), the payload kept as it came */
+            if (!st_q8_payload_ok(live, f + ST_RG_HDR, (size_t)h[2])) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }
+            for (size_t i = 0; i < qpl; i++) b[i] = f[ST_RG_HDR + i];
+            ls[k] = qpl;
+            kq[k] = 1;
+        } else if (q8) {
             long on = -1;
             if ((size_t)h[2] + ST_RG_HDR <= qcap)
                 on = st_q8_open_to(live, f + ST_RG_HDR, (size_t)h[2], b, pcap, full);
-            if (on < 0) { free(b); buf[k] = NULL; st_rg_drop(pcap); continue; }
+            if (on < 0) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }
             ls[k] = (size_t)on;
         } else if (full) {
             size_t c = (size_t)h[2] < pcap ? (size_t)h[2] : pcap;   /* past a blob nothing is read */
@@ -3146,6 +3188,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
         buf[nb] = buf[k];
         bs[nb] = buf[k];
         ls[nb] = ls[k];
+        kq[nb] = kq[k];
         gs[nb] = gen;
         nb++;
     }
@@ -3174,7 +3217,8 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
             if (ok) for (size_t i = 0; i < np; i++) cw[i] = live->w[i];
             PK_NOSW_LEAVE();
             if (ok) {
-                int acc = st_round_trimmed_w(live, cw, gen, bs, ls, gs, nb, 1, wsz);
+                int acc = keepq ? st_q8_merge(live, cw, gen, bs, ls, kq, gs, nb, 1, wsz)
+                                : st_round_trimmed_w(live, cw, gen, bs, ls, gs, nb, 1, wsz);
                 r0.accepted = acc > 0 ? acc : 0;
                 if (acc > 0) {
                     st_model v = *live;
@@ -3417,15 +3461,25 @@ static void st_q8_enc(void *c, int off, int rows, int cols)
     }
 }
 
+/* B5 q8 4 (research/b5-merge-q8direct.md §5): the one decode of a row, shared
+ * by st_q8_dec (the fp32 copy) and st_q8_merge (the int8 copy read in place):
+ * a scale that is NaN, Inf or below 0 is bad (-0 is not), scale 0 (and -0)
+ * decodes to +0 */
+static int st_q8_scale_bad(float s) { return st_q8_bad(s) || s < 0.0f; }
+static float st_q8_val(float s, uint8_t q)
+{
+    return (s == 0.0f) ? 0.0f : (float)(int8_t)q * s;
+}
+
 static void st_q8_dec(void *c, int off, int rows, int cols)
 {
     st_q8_ctx *x = (st_q8_ctx *)c;
     for (int r = 0; r < rows; r++) {
         float s = st_q8_get_f(x->q + x->pos); x->pos += sizeof(float);
-        if (st_q8_bad(s) || s < 0.0f) x->bad = 1;
+        if (st_q8_scale_bad(s)) x->bad = 1;
         uint8_t *o = x->out + ((size_t)off + (size_t)r * cols) * sizeof(float);
         for (int i = 0; i < cols; i++) {
-            float v = (s == 0.0f) ? 0.0f : (float)(int8_t)x->q[x->pos] * s;
+            float v = st_q8_val(s, x->q[x->pos]);
             x->pos++;
             st_q8_put_f(o + (size_t)i * sizeof(float), v);
         }
@@ -3538,6 +3592,167 @@ static long st_q8_open_to(const st_model *live, const void *q, size_t n, void *o
     for (size_t i = 0; i < sizeof(int32_t); i++) mv[2 * np * sizeof(float) + i] = x.q[x.pos + i];
     if (x.bad || !st_blob_tier_ok(live, out, bs)) return ST_E_ARG;
     return (long)bs;
+}
+
+/* ------------------------------------------------------------------ */
+/* B5 q8 4 (research/b5-merge-q8direct.md): the round's trimmed mean    */
+/* over peers kept as they came. A BRG2 peer is its payload (ST_BLOB_HDR */
+/* then the int8 rows, about 21 MB on L), read a row at a time and never */
+/* decoded whole; a BRG1 peer is its header + w (fp32). The values are  */
+/* st_q8_val's, the same floats st_q8_open_to writes, so the merge is   */
+/* st_trim_core's to the byte: coordinate-wise, self first then the     */
+/* peers in their order, the same three steps (each peer finite, the    */
+/* middle finite, write).                                               */
+/* ------------------------------------------------------------------ */
+static void st_q8_scan(void *c, int off, int rows, int cols)   /* the row scales only */
+{
+    st_q8_ctx *x = (st_q8_ctx *)c;
+    (void)off;
+    for (int r = 0; r < rows; r++) {
+        if (st_q8_scale_bad(st_q8_get_f(x->q + x->pos))) x->bad = 1;
+        x->pos += sizeof(float) + (size_t)cols;
+    }
+}
+/* a BRG2 payload of exactly st_q8_payload bytes: the header of m's shape and
+ * every row scale good (st_q8_open_to's checks, nothing decoded) */
+static int st_q8_payload_ok(const st_model *m, const void *q, size_t n)
+{
+    if (n != st_q8_payload(m) || !st_blob_hdr_need_ok(m, q, n, n)) return 0;
+    st_q8_ctx x = { NULL, NULL, (uint8_t *)q + sizeof(ST_BLOB_HDR), NULL, 0, 0, 0, 0 };
+    st_q8_mats(m, st_q8_scan, &x);
+    return !x.bad;
+}
+
+typedef struct {
+    const uint8_t *q;        /* BRG2: the rows after the ST_BLOB_HDR; NULL: fp32 */
+    const void *blob;        /* fp32: header + w                              */
+    size_t pos;              /* q: the bytes read                             */
+    float prev;              /* B5QD_MUT_ROWSCALE only                        */
+} st_qd_peer;
+typedef struct {
+    float *w;                /* the self member, written in place (mode 2)    */
+    st_qd_peer *p;
+    int n, t;
+    int mode;                /* 0: the peer's values finite; 1: the middle finite; 2: write */
+    int bad;
+    float *row;              /* n x maxc: one row of every peer               */
+    int maxc;
+} st_qd_ctx;
+
+static void st_qd_one(st_qd_ctx *x, size_t idx, const float *col, size_t stride)
+{
+    if (x->mode == 0) { if (st_q8_bad(col[0])) x->bad = 1; return; }
+    float v[ST_COHORT_MAX + 1];
+    int m = 0;
+    v[m++] = x->w[idx];
+    for (int j = 0; j < x->n; j++) v[m++] = col[(size_t)j * stride];
+    float f = st_trim_one(v, m, x->t);
+    if (x->mode == 1) { if (st_q8_bad(f)) x->bad = 1; }
+    else x->w[idx] = f;
+}
+static void st_qd_rows(void *c, int off, int rows, int cols)
+{
+    st_qd_ctx *x = (st_qd_ctx *)c;
+    for (int r = 0; r < rows && !x->bad; r++) {
+        size_t base = (size_t)off + (size_t)r * (size_t)cols;
+        for (int j = 0; j < x->n; j++) {
+            st_qd_peer *p = &x->p[j];
+            float *o = x->row + (size_t)j * (size_t)x->maxc;
+            if (p->q) {
+                float s = st_q8_get_f(p->q + p->pos);
+                p->pos += sizeof(float);
+#if defined(B5QD_MUT_ROWSCALE)              /* test mutant (§3): each row read with the scale of the row before */
+                { float u = p->pos == sizeof(float) ? s : p->prev; p->prev = s; s = u; }
+#endif
+                for (int i = 0; i < cols; i++) o[i] = st_q8_val(s, p->q[p->pos + (size_t)i]);
+                p->pos += (size_t)cols;
+            } else {
+                for (int i = 0; i < cols; i++) o[i] = st_blob_w_at(p->blob, base + (size_t)i);
+            }
+        }
+        for (int i = 0; i < cols && !x->bad; i++) st_qd_one(x, base + (size_t)i, x->row + i, (size_t)x->maxc);
+    }
+}
+/* one pass: the matrices row by row, then the indices outside them in order */
+static int st_qd_walk(const st_model *shape, st_qd_ctx *x, const uint8_t *cov)
+{
+    for (int j = 0; j < x->n; j++) x->p[j].pos = 0;
+    x->bad = 0;
+    st_q8_mats(shape, st_qd_rows, x);
+    float col[ST_COHORT_MAX];
+    for (size_t i = 0; !x->bad && i < (size_t)shape->n_params; i++) {
+        if (cov[i]) continue;
+        for (int j = 0; j < x->n; j++) {
+            st_qd_peer *p = &x->p[j];
+            if (p->q) { col[j] = st_q8_get_f(p->q + p->pos); p->pos += sizeof(float); }
+            else col[j] = st_blob_w_at(p->blob, i);
+        }
+        st_qd_one(x, i, col, 1);
+    }
+    return !x->bad;
+}
+
+/* st_round_trimmed_w with peers of either kind (kind[k] 1: a BRG2 payload of
+ * lens[k] bytes; 0: an fp32 header + w of `need`). Returns as st_trim_core. */
+static int st_q8_merge(const st_model *shape, float *w, uint32_t gen,
+                       const void *const *peer, const size_t *lens, const uint8_t *kind,
+                       const uint32_t *gens, int count, int t, size_t need)
+{
+    if (!shape || !w) return ST_E_ARG;
+    if (count < 0 || count > ST_COHORT_MAX || t < 1) return ST_E_ARG;
+    if (count > 0 && (!peer || !lens || !kind || !gens)) return ST_E_ARG;
+#if defined(B5S5_TRIM_OFF)
+    t = 0;
+#endif
+    int np = shape->n_params;
+    int maxc = shape->d > shape->dff ? shape->d : shape->dff;
+    size_t cn = (size_t)np, rn = (size_t)(count > 0 ? count : 1) * (size_t)maxc * sizeof(float);
+    uint8_t *cov = (uint8_t *)calloc(cn, 1);
+    float *row = (float *)malloc(rn);
+    if (!cov || !row) { free(cov); free(row); return ST_E_OOM; }
+    st_rg_hold(cn + rn);
+    st_q8_ctx c0 = { NULL, cov, NULL, NULL, 0, 0, 0, 0 };
+    st_q8_mats(shape, st_q8_count, &c0);
+    st_qd_peer p[ST_COHORT_MAX];
+    int accepted = 0;
+    for (int k = 0; k < count; k++) {
+#ifndef ST_ROUND_NO_GEN
+        if (gens[k] != gen) continue;
+#else
+        (void)gen;
+#endif
+        st_qd_peer e = { NULL, NULL, 0, 0.0f };
+        if (kind[k]) {
+            if (!st_q8_payload_ok(shape, peer[k], lens[k])) continue;
+            e.q = (const uint8_t *)peer[k] + sizeof(ST_BLOB_HDR);
+        } else {
+            if (!st_blob_hdr_need_ok(shape, peer[k], lens[k], need)) continue;
+            e.blob = peer[k];
+        }
+#ifndef ST_MERGE_NO_FINITE
+        if (e.q) {                          /* each peer on its own, as st_blob_w_finite */
+            st_qd_ctx one = { w, &e, 1, t, 0, 0, row, maxc };
+            if (!st_qd_walk(shape, &one, cov)) continue;
+        } else if (!st_blob_w_finite(peer[k], np)) continue;
+#endif
+        p[accepted++] = e;
+    }
+    int ret = 0;
+    if (accepted + 1 >= 2 * t + 2) {        /* counted after the checks, as st_trim_core */
+        st_qd_ctx x = { w, p, accepted, t, 1, 0, row, maxc };
+        int ok = 1;
+#ifndef ST_MERGE_NO_FINITE
+        ok = st_w_finite(w, np) && st_qd_walk(shape, &x, cov);
+#endif
+        if (ok) {
+            x.mode = 2;
+            st_qd_walk(shape, &x, cov);
+            ret = accepted;
+        }
+    }
+    free(row); free(cov);
+    st_rg_drop(cn + rn);
+    return ret;
 }
 
 /* ================================================================== */

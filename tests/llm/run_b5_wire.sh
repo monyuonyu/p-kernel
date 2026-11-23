@@ -32,6 +32,10 @@
 # B5 q8 3 (research/b5-merge-mem.md §3): q7 (an L round merging seven peers,
 # about 3 minutes and 1.4 GB, plain and its falsifier only);
 #   -DB5M_NC_CAND     the candidate model as before             -> Q7 red
+# B5 q8 4 (research/b5-merge-q8direct.md §3): q7 QD3 (<= 350 MB, the BRG2 peers
+# merged from their int8 copies, st_q8_merge);
+#   -DB5QD_NC_DECODE  the BRG2 peers decoded to fp32 as before  -> QD3 red (q7)
+#   -DB5QD_MUT_ROWSCALE each row read with the row before's scale -> Q0 red (unit)
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -93,6 +97,8 @@ build nomom  -DB5W_NC_SEND_MOMENTS   # B5 ⓪ (research/b5-m-default.md §3 2): 
 build nq8    -DB5Q_NC_INT2T          # B5 q8 (research/b5-q8-copy.md §4): Q0 red, Q2 red
 build nfull  -DB5R_NC_FULL_PEER      # B5 q8 2 (research/b5-recv-mem.md §3): Q5 red
 build ncand  -DB5M_NC_CAND           # B5 q8 3 (research/b5-merge-mem.md §3): Q7 red
+build ndec   -DB5QD_NC_DECODE        # B5 q8 4 (research/b5-merge-q8direct.md §3): QD3 red
+build mrow   -DB5QD_MUT_ROWSCALE     # B5 q8 4: the int8 rows read with the scale of the row before -> Q0 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -117,6 +123,7 @@ nc nolatch b5w-W14
 nc nomom b5w-W15
 nc nq8 b5q-Q0
 nc nfull b5r-Q5
+nc mrow b5q-Q0
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 # Q7 (research/b5-merge-mem.md §3): its own entry, plain and the falsifier only
@@ -128,6 +135,11 @@ red="$(grep '^  FAIL  ' "$OUT/q7-ncand.log" | sed 's/^  FAIL  \[\([^]]*\)\].*/\1
 if [ "$red" = "b5m-Q7 b5m-QD3 " ] && grep -q '^  PASS  \[b5m-Q7\] precondition' "$OUT/q7-ncand.log"; then
     echo "[b5-wire] falsifier ncand: red on b5m-Q7 and b5m-QD3 only, the precondition green (as it must)"
 else echo "[b5-wire] falsifier ncand: FAIL, red on '${red}', want 'b5m-Q7 b5m-QD3' with the precondition green"; fail=1; fi
+# QD3 (research/b5-merge-q8direct.md §3): decoded to fp32 as before -> QD3 red only
+"$WORK/bin-ndec" q7 > "$OUT/q7-ndec.log" 2>&1
+red="$(grep '^  FAIL  ' "$OUT/q7-ndec.log" | sed 's/^  FAIL  \[\([^]]*\)\].*/\1/' | sort -u | tr '\n' ' ')"
+if [ "$red" = "b5m-QD3 " ]; then echo "[b5-wire] falsifier ndec: red on b5m-QD3 only (as it must)"
+else echo "[b5-wire] falsifier ndec: FAIL, red on '${red}', want 'b5m-QD3'"; fail=1; fi
 if [ "${B5W_MODE:-}" = unit ]; then
     if [ "$fail" = 0 ]; then echo "[result] PASS  b5-wire unit"; exit 0; fi
     echo "[result] FAIL  b5-wire unit"; exit 1
