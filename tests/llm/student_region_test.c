@@ -444,6 +444,13 @@ static void q5(uint32_t G)
     printf("  Q5: M three peers held %zu bytes (line %zu; header+w %zu, the full copy %zu)\n", got, line, wsz, st_rg_cap(&mk[0]));
     check(rp.fetched == 3 && rp.accepted == 3, "b5r-Q5", "precondition: the M round took its three peers");
     check(got > 0 && got <= line, "b5r-Q5", "M, three BRG2 peers: the round holds <= one fetch buffer + 3 x (header + w) + scratch + candidate");
+    /* RG-FETCH (research/b5-recv-mem.md §6): the count is the real malloc. The
+     * candidate is an st_init_tier model, w g mu vu (4 x n_params floats), held
+     * with the three peers' header + w; audit-219 measured 12 MB more than a
+     * count of bs (w mu vu) */
+    size_t floor_ = 3u * wsz + 4u * np * sizeof(float);
+    printf("  Q5: M counted %zu, the merge phase allocates at least %zu\n", got, floor_);
+    check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's 4 x n_params floats)");
     tab_free(&tq);
     for (int k = 0; k < K; k++) st_free(&mk[k]);
     /* L, seven peers that do not answer: the buffers are had before the first fetch */

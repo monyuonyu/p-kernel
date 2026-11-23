@@ -272,6 +272,17 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 /* metal gains NO symbol.                                                */
 /* ================================================================== */
 #include "pfs_repl.h"
+#include "llm/student.h"   /* ST_RG_FETCH_MAX, ST_RG_HDR: the RG-FETCH tie below */
+
+/* RG-FETCH (research/b5-recv-mem.md §6): a region round fetches every copy into
+ * one buffer of ST_RG_FETCH_MAX (student.h, written out as 8192 x 4096 + hdr).
+ * Publish below takes a copy of up to GL_ST_MAXCHUNK chunks of GL_ST_CHUNK. If
+ * one side changed alone, gl_student_fetch would refuse a copy publish took
+ * (len > cap) and the round would read "could not fetch". Tied here; a change
+ * to either side must change the other (tests/llm/run_rg_fetch_tie.sh). */
+_Static_assert((unsigned long long)ST_RG_FETCH_MAX ==
+               (unsigned long long)GL_ST_MAXCHUNK * GL_ST_CHUNK + ST_RG_HDR,
+               "RG-FETCH tie: ST_RG_FETCH_MAX (student.h) must be GL_ST_MAXCHUNK x GL_ST_CHUNK + ST_RG_HDR");
 
 /* windowed-want fetch policy (§2.1). W <= PFSR_PENDING_MAX. */
 #if defined(B5W_NC_LOUD)
