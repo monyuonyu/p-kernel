@@ -388,7 +388,16 @@ static void q0(st_model *n, uint32_t G)
     clone(&a, &n[0]);
     int r3 = round_on(&a, G, 0, all4, 4, tab_fetch, &tq, &ra); say("Q0 mixed", r3, &ra);
     check(ra.fetched == 3 && ra.same_gen == 4 && ra.accepted == 3, "b5q-Q0", "BRG1 and BRG2 in one round: all three counted");
-    st_free(&a);
+    /* B5 q8 4 (research/b5-merge-q8direct.md): the mixed round merges a BRG1
+     * peer (its buffer grown to header + w) with two int8 ones; the same round
+     * with all three as BRG1 (node 1 as is, nodes 2 3 their fakes) */
+    free(tf.b[1]); tf.b[1] = wrap(&n[1], G, &tf.n[1]);
+    clone(&b, &n[0]);
+    int r4 = round_on(&b, G, 0, all4, 4, tab_fetch, &tf, &rb); say("Q0 mixed as BRG1", r4, &rb);
+    printf("  Q0: mixed adopted %d / as BRG1 %d, held %.4f -> %.4f\n", r3, r4, (double)ra.held_live, (double)ra.held_cand);
+    check(rb.accepted == 3 && r3 == r4 && hash(&a) == hash(&b), "b5q-Q0",
+          "the mixed round (one BRG1, two BRG2) == the same round with the two as BRG1 fakes (bytes)");
+    st_free(&a); st_free(&b);
     tab_free(&tq); tab_free(&tf);
     st_free(&f);
 }
