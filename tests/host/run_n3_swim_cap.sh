@@ -28,6 +28,8 @@
 #       table has P-2..P rows besides SELF (drpc's rows live in the slots;
 #       the lower bound: audit-211 4b). Negative control: N3C_CFLAGS=-DN3D_NC_FLEET
 #       (drpc keeps the 2a array) => C10 RED
+#   C11 (audit-227, only with N3C_DNODE=1) node N paused, handed over while DEAD,
+#       resumed at its old incarnation: no holder revives it by a bare packet
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
@@ -224,6 +226,43 @@ for i in $(seq 1 $((N - 1))); do
 done
 [ "$c9n" -ge 1 ] && [ "$c9ok" -eq "$c9n" ] && r C9 PASS "($c9ok/$c9n former holders have id $VID ALIVE again)" \
     || r C9 FAIL "($c9ok/$c9n former holders have id $VID ALIVE again; not:$c9bad)"
+# C11 (audit-227, only with N3C_DNODE=1): node N is PAUSED (SIGSTOP), not killed,
+# so after SIGCONT it speaks at its OLD incarnation until it is told DEAD and
+# refutes. A former holder that handed its slot over keeps it DEAD in the grave
+# (N3 2b c0b8c13a): a bare packet must not bring it back ("recovered (via rx)" or
+# "discovered"); its newer incarnation does ("back at incarnation"). C9 cannot see
+# this: a restarted node carries its newer incarnation in its first packet.
+# Mutation (audit-227 m1): dnode_row_rd without the grave lines => the tell is
+# skipped and sw_take re-takes the slot DEAD, then "recovered (via rx)".
+if [ "${N3C_DNODE:-0}" = 1 ]; then
+    declare -A L3 L4
+    for i in $(seq 1 $((N - 1))); do L3[$i]=$(wc -l < "$LOG/node$i.log"); done
+    kill -STOP "${PID[$N]}" 2>/dev/null
+    sleep "$C6W"
+    for i in $(seq 1 $((N - 1))); do printf '%s\n' "nodes" >&$((i + 9)); done
+    sleep 5
+    for i in $(seq 1 $((N - 1))); do L4[$i]=$(wc -l < "$LOG/node$i.log"); done
+    kill -CONT "${PID[$N]}" 2>/dev/null
+    sleep "${N3C_C11_WAIT:-40}"
+    c11n=0; c11ok=0; c11back=0; c11bad=""
+    for i in $(seq 1 $((N - 1))); do
+        before=$(tr -d '\r' < "$LOG/node$i.log" | head -n "${L3[$i]}" | grep -a '^\[swim\] slots ' | tail -1 | sed -n 's/.* ids \(.*\)$/ \1 /p')
+        case "$before" in *" $VID "*) ;; *) continue ;; esac
+        paused=$(tr -d '\r' < "$LOG/node$i.log" | head -n "${L4[$i]}" | tail -n +"$((L3[$i] + 1))")
+        echo "$paused" | grep -aqE "\[swim\] (gossip: )?node $VID -> DEAD" || continue
+        echo "$paused" | grep -a '^\[swim\] slots ' | tail -1 | grep -aq " $VID\( \|$\)" && continue
+        c11n=$((c11n + 1))
+        after=$(tail -n +"$((L4[$i] + 1))" "$LOG/node$i.log" | tr -d '\r')
+        bad=$(echo "$after" | grep -acE "node $VID (recovered|discovered)")
+        echo "$after" | grep -aq "node $VID back at incarnation" && c11back=$((c11back + 1))
+        [ "$bad" -eq 0 ] && c11ok=$((c11ok + 1)) || c11bad="$c11bad $i(rx=$bad)"
+    done
+    alive11=0; kill -0 "${PID[$N]}" 2>/dev/null && alive11=1
+    echo "[n3-swim-cap] C11 paused id $VID: $c11n holders handed it over while DEAD, $c11back say back at a newer incarnation"
+    [ "$c11n" -ge 1 ] && [ "$c11ok" -eq "$c11n" ] && [ "$c11back" -ge 1 ] && [ "$alive11" = 1 ] \
+        && r C11 PASS "($c11ok/$c11n handed-over holders: no bare-packet revival; $c11back back by incarnation)" \
+        || r C11 FAIL "($c11ok/$c11n handed-over holders without a bare-packet revival, $c11back back by incarnation, node $N alive=$alive11; not:$c11bad)"
+fi
 [ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes $((P - 1))<=U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and $((P - 1))<=U<=$P)"
 [ "$c2" -eq "$N" ] && r C2 PASS "($N/$N refused > 0)" || r C2 FAIL "($c2/$N nodes refused > 0)"
 [ "$c3" -eq "$N" ] && r C3 PASS "($N/$N >= $((P - 2)) ALIVE)" || r C3 FAIL "($c3/$N nodes >= $((P - 2)) ALIVE)"
