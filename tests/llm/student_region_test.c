@@ -331,6 +331,40 @@ static void w15(const st_model *m, uint32_t gen)
     free(env);
 }
 
+/* ---- audit-224 (research/b5-merge-q8direct.md §5 note 1): a BRG2 peer whose
+ * values overflow is refused on its own. A row scale finite and >= 0 (3e38)
+ * passes the scale checks at the fetch; scale x int8 is Inf, so the peer's own
+ * finite walk in st_q8_merge must drop it, as st_blob_w_finite dropped the
+ * decoded copy before. Without that walk (-DB5QD_MUT_NOPEERFIN) the unit was
+ * green: nothing else in it sends a non-finite value. ---- */
+static void qdf(st_model *n, uint32_t G)
+{
+    if (!have_q8()) { check(0, "b5qd-F", "st_rg_wrap_q8 is not there"); return; }
+    const float huge = 3.0e38f;
+    tab_t t; memset(&t, 0, sizeof t);
+    for (int k = 1; k < K; k++) t.b[k] = wrap_q8(&n[k], G, &t.n[k]);
+    st_model x; st_init_tier(&x, 977u, n[0].tier);        /* a fifth member, for the arm where one is dropped */
+    t.b[K] = wrap_q8(&x, G, &t.n[K]);
+    st_free(&x);
+    memcpy((uint8_t *)t.b[2] + ST_RG_HDR + 40, &huge, sizeof huge);   /* node 2's first row scale */
+    ((uint8_t *)t.b[2])[ST_RG_HDR + 40 + 4] = 127;   /* and its first value: an int2 copy (nq8) has a row of 0s there */
+    const uint16_t all4[4] = { 0, 1, 2, 3 }, all5[5] = { 0, 1, 2, 3, 4 };
+    st_model a; st_rg_report r;
+    clone(&a, &n[0]);
+    uint64_t h0 = hash(&a);
+    int r4 = round_on(&a, G, 0, all4, 4, tab_fetch, &t, &r); say("QDF 3 peers, one overflows", r4, &r);
+    check(r.fetched == 3 && r.same_gen == 4, "b5qd-F", "precondition: the overflowing peer passes the fetch (its scales are finite, >= 0)");
+    check(r4 == 0 && r.accepted == 0 && r.adopted == 0 && hash(&a) == h0, "b5qd-F",
+          "three peers, one overflows: it is dropped, two + self < 4, the round refuses (live byte-unchanged)");
+    st_free(&a);
+    clone(&a, &n[0]);
+    int r5 = round_on(&a, G, 0, all5, 5, tab_fetch, &t, &r); say("QDF 4 peers, one overflows", r5, &r);
+    check(r.fetched == 4 && r.same_gen == 5 && r.accepted == 3, "b5qd-F",
+          "four peers, one overflows: that one alone is dropped (accepted 3), the round goes on");
+    st_free(&a);
+    tab_free(&t);
+}
+
 /* ---- B5 q8 (research/b5-q8-copy.md §4): Q0 and Q4 ---- */
 static void q0(st_model *n, uint32_t G)
 {
@@ -631,6 +665,7 @@ static int unit(void)
 
     w7_w10(n, &t, G);
     q0(n, G);
+    qdf(n, G);
     q4();
     q5(G);
 
