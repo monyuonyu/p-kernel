@@ -3737,8 +3737,10 @@ static int st_q8_merge(const st_model *shape, float *w, uint32_t gen,
         }
 #ifndef ST_MERGE_NO_FINITE
         if (e.q) {                          /* each peer on its own, as st_blob_w_finite */
+#if !defined(B5QD_MUT_NOPEERFIN)            /* test mutant (audit-224): the BRG2 peer's own walk skipped -> b5qd-F red */
             st_qd_ctx one = { w, &e, 1, t, 0, 0, row, maxc };
             if (!st_qd_walk(shape, &one, cov)) continue;
+#endif
         } else if (!st_blob_w_finite(peer[k], np)) continue;
 #endif
         p[accepted++] = e;
