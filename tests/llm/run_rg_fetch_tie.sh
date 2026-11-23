@@ -12,7 +12,9 @@
 #            the tie's message:
 #     grow    GL_ST_MAXCHUNK 8192u -> 16384u       (gossip_learn.h)
 #     shrink  ST_RG_FETCH_MAX (8192u * -> (4096u * (student.h)
-# Seconds, no model. Both arms on both the x86_64 and aarch64 hosted defines.
+#   and, with the tie cut out of the copy (cut*), the same two changes compile
+#   (the refusal is the tie's, and the cut still finds exactly the assert).
+# Seconds, no model. Every arm on both the x86_64 and aarch64 hosted defines.
 # RG_TIE_NC=1 (falsifier): the tie is cut out of each copy first -> grow and
 # shrink must then compile, so every "refused" arm goes red.
 # ---------------------------------------------------------------------------
@@ -50,11 +52,12 @@ arm() {  # arm <name> <expect: ok|refused> <a64|x86>
     fi
 }
 
-copy() {  # copy <name>: arch/common into the work dir
+CUT='/^_Static_assert((unsigned long long)ST_RG_FETCH_MAX/,/RG-FETCH tie: ST_RG/d'
+copy() {  # copy <name> [cut]: arch/common into the work dir; cut = the tie removed
     mkdir -p "$WORK/$1/arch"
     cp -r "$ROOT/arch/common" "$WORK/$1/arch/common"
-    if [ "${RG_TIE_NC:-0}" = 1 ]; then
-        mutate "$1" gossip_learn.c '/^_Static_assert((unsigned long long)ST_RG_FETCH_MAX/,/RG-FETCH tie: ST_RG/d'
+    if [ "${2:-}" = cut ] || [ "${RG_TIE_NC:-0}" = 1 ]; then
+        mutate "$1" gossip_learn.c "$CUT"
     fi
 }
 mutate() {  # mutate <name> <file under arch/common> <sed expr>
@@ -79,5 +82,17 @@ arm shrink refused a64
 arm plain  ok      x86
 arm grow   refused x86
 arm shrink refused x86   # audit-220 found the x86 shrink arm missing
+# audit-222: the refusals above come from the tie and nothing else - with the
+# tie cut out (the sed range), the same one-sided changes compile. If the
+# assert's form changes so that the range no longer cuts exactly it (one line,
+# another first line), these arms go red instead of the falsifier going quiet.
+copy cutplain cut
+copy cutgrow cut;   mutate cutgrow   include/gossip_learn.h 's/define GL_ST_MAXCHUNK  8192u/define GL_ST_MAXCHUNK  16384u/'
+copy cutshrink cut; mutate cutshrink llm/student.h        's/define ST_RG_FETCH_MAX (8192u \*/define ST_RG_FETCH_MAX (4096u */'
+for a in a64 x86; do
+    arm cutplain  ok "$a"
+    arm cutgrow   ok "$a"
+    arm cutshrink ok "$a"
+done
 if [ $fail -eq 0 ]; then echo "[result] PASS  rg-fetch-tie"; exit 0; fi
 echo "[result] FAIL  rg-fetch-tie"; exit 1
