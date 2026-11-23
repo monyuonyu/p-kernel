@@ -8,6 +8,7 @@
 #   U5 a try that ignores SIGTERM is killed all the same (audit-107)
 #   U4b the same for any <region>.archive.ubuntu.com mirror (the runners' ec2 one, 2026-11-19)
 #   U8 apt_install.sh's second install reads the rewritten sources too
+#   U9 apt_install.sh waits for a dpkg its cut left running (holding the lock) before the retry
 # A negative control (a script without the time limit) must go red: see the NC arm at the end.
 set -u
 SUT="${1:-tests/ci/apt_update.sh}"
@@ -28,11 +29,24 @@ cp "$FAKE/mirrors" "$FAKE/mirrors.seen.$n"
 case "$act" in
   hang) exec sleep 300 ;;
   deaf) trap '' TERM; exec sleep 300 ;;
+  # U9: the dpkg it started outlives the cut (timeout signals its own process group; the
+  # runner's dpkg lived on, CI 45188947825, so this one is out of that group)
+  orphan) setsid "$FAKE/bin/dpkg" hold 3 & exec sleep 300 ;;
+  lockok) [ -e "$FAKE/lock" ] && exit 100; exit 0 ;;     # U9: an install that needs the dpkg lock
   ok) exit 0 ;;
   *) exit 100 ;;
 esac
 EOF
 chmod +x "$d/bin/apt-get"
+# U9's fake dpkg: `dpkg hold <s>` holds the lock (a file) for s seconds, as the real dpkg does
+# while it sets up packages; `dpkg --configure -a` fails while the lock is held, as on the runner.
+cat > "$d/bin/dpkg" <<'EOF'
+#!/bin/bash
+if [ "$1" = hold ]; then touch "$FAKE/lock"; sleep "$2"; rm -f "$FAKE/lock"; exit 0; fi
+[ -e "$FAKE/lock" ] && { echo "dpkg: error: dpkg database lock was locked (fake)"; exit 2; }
+exit 0
+EOF
+chmod +x "$d/bin/dpkg"
 
 MIRROR='http://azure.archive.ubuntu.com/ubuntu priority:1'
 run() { # plan words...
@@ -77,6 +91,22 @@ n=$(cat "$d/count" 2>/dev/null || echo 0)
 if [ "$rc" = 0 ] && [ "$n" = 3 ] && grep -q '^http://archive.ubuntu.com/' "$d/mirrors.seen.3" && ! grep -q 'ec2' "$d/mirrors.seen.3"
 then ok U8; else bad "U8 rc=$rc tries=$n $(cat "$d/mirrors.seen.3" 2>/dev/null)"; fi
 
+# U9: CI 45188947825 (DEPTH, 2026-11-23): the first install passed 300 s while dpkg was still
+# setting up the cross gcc; timeout killed apt-get, not that dpkg, so `dpkg --configure -a` and
+# the second install failed on its lock (exit 100, a new red for promote). apt_install.sh must
+# wait for the dpkg it left. Plan: install (its dpkg holds the lock 3 s past the 2 s cut),
+# update ok, install that fails while the lock is held.
+rm -f "$d"/count "$d"/mirrors.seen.* "$d/lock"
+printf '%s\n' orphan ok lockok > "$d/plan"
+echo "$MIRROR" > "$d/mirrors"
+FAKE="$d" PATH="$d/bin:$PATH" APT_FIRST_SECS=2 APT_UPDATE_SECS=2 APT_UPDATE_KILL=1 APT_SOURCES="$d/mirrors" \
+    timeout 30 bash "$INST" gcc > "$d/out" 2>&1
+rc=$?
+n=$(cat "$d/count" 2>/dev/null || echo 0)
+if [ "$rc" = 0 ] && [ "$n" = 3 ] && ! grep -q 'lock was locked' "$d/out"
+then ok U9; else bad "U9 rc=$rc tries=$n $(grep -a 'lock' "$d/out" | head -1)"; fi
+sleep 3; rm -f "$d/lock"   # the fake dpkg of a red run may still hold it
+
 run ok
 if [ "$rc" = 0 ] && [ "$n" = 1 ] && grep -q azure "$d/mirrors"; then ok U2; else bad "U2 rc=$rc tries=$n"; fi
 
@@ -86,9 +116,9 @@ if [ "$rc" != 0 ] && [ "$rc" != 124 ] && [ "$n" = 3 ] && [ "$e" -lt 15 ]; then o
 run deaf ok
 if [ "$rc" = 0 ] && [ "$n" = 2 ] && [ "$e" -lt 10 ]; then ok U5; else bad "U5 rc=$rc tries=$n secs=$e"; fi
 
-# U6 (audit-108, audit-110): a job that calls apt_install.sh can spend 27 minutes on apt alone:
-# update 8.5, install 5, update again 8.5, install 5. Its time limit must leave room for that;
-# 35 is the floor (27 and a short job), this does not know how long the job's own work takes.
+# U6 (audit-108, audit-110): a job that calls apt_install.sh can spend 32 minutes on apt alone:
+# update 8.5, install 5, the wait for a dpkg the cut left 5 (U9), update again 8.5, install 5.
+# Its time limit must leave room for that; 35 is the floor (32 and a short job), this does not know how long the job's own work takes.
 CI="$(dirname "$(readlink -f "$0")")/../../.github/workflows/ci.yml"
 short="$(python3 - "$CI" <<'PY'
 import re, sys

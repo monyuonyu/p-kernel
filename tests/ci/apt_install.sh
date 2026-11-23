@@ -14,8 +14,9 @@
 # fails, point every apt source at archive.ubuntu.com instead of the azure
 # mirror, apt-get update, and try again (the .debs already fetched stay in
 # /var/cache/apt/archives), cut at the same limit. Exit status is the last install's; the
-# worst case with the update before it is 27 minutes (update 8.5, install 5, update 8.5, install 5),
-# and jobs that call this allow at least 35, plus what the job itself takes.
+# worst case with the update before it is 32 minutes (update 8.5, install 5, the wait for a
+# dpkg the cut left 5, update 8.5, install 5), and jobs that call this allow at least 35, plus
+# what the job itself takes.
 set -u
 FIRST="${APT_FIRST_SECS:-300}"
 if timeout "$FIRST" apt-get install -y --no-install-recommends "$@"; then exit 0; fi
@@ -25,6 +26,12 @@ echo "[apt_install] first try failed or passed ${FIRST}s; retrying on archive.ub
 for f in ${APT_SOURCES:-/etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*}; do
     [ -f "$f" ] && sed -i 's|[A-Za-z0-9.-]*\.archive\.ubuntu\.com|archive.ubuntu.com|g' "$f"
 done
+# The cut kills apt-get, not the dpkg it started: CI 45188947825 (DEPTH, 2026-11-23) cut the
+# first try while dpkg was setting up the cross gcc, and the dpkg below and the second install
+# failed on its lock (exit 100). Wait for that dpkg first (at most FIRST seconds more).
+w=0
+while pgrep -x dpkg >/dev/null 2>&1 && [ "$w" -lt "$FIRST" ]; do sleep 1; w=$((w + 1)); done
+[ "$w" -gt 0 ] && echo "[apt_install] waited ${w}s for the dpkg the cut left running"
 dpkg --configure -a || true    # in case the cut fell inside dpkg, not the download
 "$(dirname "$(readlink -f "$0")")/apt_update.sh"   # the update has its limits too (audit-107)
 timeout "$FIRST" apt-get install -y --no-install-recommends "$@"
