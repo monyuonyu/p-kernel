@@ -47,6 +47,10 @@ drpc.h に口（`dnode_state/ip/missed/node_id` は読みだけ＝キャスト�
 
 crown・hosted の .text/.rodata/.data は 4 つとも全バイト同じ、D2 0・D2c PASS・NC=2 で D2 赤・master で D2c 赤を再現。毒は gcc・aarch64-gcc・mingw・clang 18 で効き、後から定義したマクロ・`##` の連結も断る。読みの口は右辺値（`&dnode_state(1)` は断られる）。**すり抜けるもの**: drpc.h より前に定義したマクロ（gcc の仕様）・asm のラベル・自前の `DRPC_TABLE_OWNER`（arch/ の下の `dnode_table[` なら D2 が拾う）。今の木には無い。CI の段の `! grep … FAIL` は効かない形だった＝監査側で `if grep …; then exit 1; fi` に。
 
+## 4e. 2b を作った（11-24、feat/n3-dnode-rows、監査待ち）
+
+hosted は表を持たない。行は `SWIM_PEER.row`（sw_map 1 本）。持ち主の 138 行を `DROW(n)`（読み、枠が無ければ毎回 0 にした UNKNOWN の行）・`DROWW(n)`（代入、SWIM の言葉と同じく枠を取る＝渡し・押し出し・断って数える）に機械的に置き換え（pk-scratch/n3b/rowify.py）、ベアでは両方 `dnode_table[(n)]`＝crown 全バイト同じ。drpc_init はある行だけ UNKNOWN に戻す。caller_strs は 8 ビットの番号の 256 で（DNODE_MAX でなく）、3 桁目も出す。**自分の行は枠の外に 1 つ**（最初の版は自分も枠に入れた→12 台とも枠の 8 つが全部 peer で自分の行が消えていた。自己試験の UNKNOWN の一瞬に枠が渡され、戻しが断られたと読む。drpc_init が登録した id で引く）。結果（容器 /build/n3b）: D1 1,412/1,412/1,412 B、NC1 で D1 赤、crown 2 つ全バイト同じ、自己試験 18 個の PASS 97 行が master と同じ、C1〜C10 PASS（12 台とも SELF 以外 8 行）、陰性 -DN3D_NC_FLEET は C10 だけ赤（10〜11 行、bb27c5f2 の木＝陰性の腕は自分の行の直しを通らない）。**欠陥（6421bb31）: step 1 の陰性 NO_GRAVE が緑になった**＝DEAD の持ち主の枠を渡すと行ごと消え、id が UNKNOWN に戻り、前の持ち主は全員「gossip で発見」の道（incarnation を見ない）で生き返らせた（master は表に DEAD が残る）。直し c0b8c13a: 墓に状態も（SW_GRAVE.st）、枠の無い墓の DEAD は読みで DEAD、墓から枠を取り直すと DEAD から。C9 に「殺した後に前の持ち主が 11 を discovered と言わない」を足した。代わり: 枠の無い DEAD の id も `nodes` に DEAD で出る＝行の数は最大 P＋墓（墓も SW_STORE で O(R)）。決めたこと: **送る heartbeat は全 id のまま**（行の上だけに送ると誰も見つからない＝§2.2 の「送るのも行の上だけ」はやめた）。行を回すのも id の上のまま（DROW 1 回が枠を線形に探す＝CPU は O(N·R)、メモリは O(R)）＝限界。
+
 ## 5. 選ばなかった案
 
 drpc に別の NODEMAP（食い違う）。一度に 2b まで（監査で変わった所を切り分けにくい）。

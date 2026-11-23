@@ -147,7 +147,7 @@ int main(void)
            (unsigned long)sizeof(NODEMAP));
     printf("   sizeof(kdds_topics)     = %-8lu B   (topic table; sized by R)\n",
            (unsigned long)sizeof(kdds_topics));
-    printf("   sizeof(dnode_table)     = %-8lu B   (FLEET-sized, DNODE_MAX; deferred)\n",
+    printf("   sizeof(dnode_table)     = %-8lu B   (0 hosted: N3 2b, rows in the SWIM slots)\n",
            (unsigned long)DNODE_TABLE_BYTES);
     /* budget gate (the [4096]->RED tooth). The _Static_asserts above already
      * enforce this at compile time; assert again at runtime for the log. */
