@@ -180,7 +180,23 @@ typedef struct {
     UB  missed; /* consecutive missed heartbeat periods                  */
 } DNODE;
 
+#if defined(_TK_HOSTED_LIBC_) && !defined(N3D_NC_FLEET)
+/* N3 2b (research/n3-dnode-region.md §2.2): hosted keeps no fleet-sized
+ * table. A row lives in the SWIM slot of its id (swim.c, SWIM_PEER.row), the
+ * one NODEMAP sw_map. dnode_row_rd(n): the row, or a zeroed one (UNKNOWN,
+ * ip 0, node_id n) when n has no slot; a write through it is lost.
+ * dnode_row_wr(n): the row, taking a slot as SWIM does (full: handed over
+ * or refused and counted); refused = a sink nobody reads. Never NULL.
+ * dnode_rows_reset(): every row UNKNOWN (drpc_init). Stubs that do not link
+ * swim.c define them over their own table (DNODE_TABLE_DEFINE).
+ * -DN3D_NC_FLEET: negative control of D5 (the 2a array stays). */
+#define DNODE_ROWS_IN_SLOTS 1
+DNODE *dnode_row_rd(pk_node_t n);
+DNODE *dnode_row_wr(pk_node_t n);
+void   dnode_rows_reset(void);
+#else
 extern DNODE dnode_table[DNODE_MAX];
+#endif
 
 /* N3 2a (research/n3-dnode-region.md §2.1, §4b): the door to the node table.
  * Outside the owners (drpc.c, swim.c: they #define DRPC_TABLE_OWNER before
@@ -190,16 +206,35 @@ extern DNODE dnode_table[DNODE_MAX];
  * through dnode_set_*. Macros, not static inline: inline moved .text (§4),
  * these expand to the very same expressions = crown and hosted .text are
  * byte-identical. DNODE_FOREACH is the row walk 2b will shrink to O(R). */
-#define dnode_state(n)          ((UB)dnode_table[(n)].state)
-#define dnode_ip(n)             ((UW)dnode_table[(n)].ip)
-#define dnode_missed(n)         ((UB)dnode_table[(n)].missed)
-#define dnode_node_id(n)        ((pk_node_t)dnode_table[(n)].node_id)
-#define dnode_set_state(n, v)   (dnode_table[(n)].state = (v))
-#define dnode_set_ip(n, v)      (dnode_table[(n)].ip = (v))
-#define dnode_set_node_id(n, v) (dnode_table[(n)].node_id = (v))
-#define DNODE_FOREACH(n)        for ((n) = 0; (n) < DNODE_MAX; (n)++)
+/* DROW(n): the row of n as an lvalue for reading (and for changing a row
+ * that exists); DROWW(n): for an assignment that must create it. Bare: both
+ * are the 2a expression dnode_table[(n)] = the same .text. */
+#if defined(DNODE_ROWS_IN_SLOTS)
+#define DROW(n)                 (*dnode_row_rd((pk_node_t)(n)))
+#define DROWW(n)                (*dnode_row_wr((pk_node_t)(n)))
+#define DNODE_TABLE_BYTES       ((UW)0)   /* no table: the rows are in the slots */
+/* stubs without swim.c: a private table behind the same three functions */
+#define DNODE_TABLE_DEFINE \
+    static DNODE dnode_stub_tab[DNODE_MAX], dnode_stub_sink; \
+    DNODE *dnode_row_rd(pk_node_t n) { if (n < DNODE_MAX) return &dnode_stub_tab[n]; \
+        dnode_stub_sink = (DNODE){ .node_id = n }; return &dnode_stub_sink; } \
+    DNODE *dnode_row_wr(pk_node_t n) { return dnode_row_rd(n); } \
+    void dnode_rows_reset(void) { for (INT i = 0; i < DNODE_MAX; i++) \
+        dnode_stub_tab[i] = (DNODE){ .node_id = (pk_node_t)i }; }
+#else
+#define DROW(n)                 dnode_table[(n)]
+#define DROWW(n)                dnode_table[(n)]
 #define DNODE_TABLE_BYTES       (sizeof(dnode_table))
 #define DNODE_TABLE_DEFINE      DNODE dnode_table[DNODE_MAX]  /* stubs: ushim, placement_stub */
+#endif
+#define dnode_state(n)          ((UB)DROW(n).state)
+#define dnode_ip(n)             ((UW)DROW(n).ip)
+#define dnode_missed(n)         ((UB)DROW(n).missed)
+#define dnode_node_id(n)        ((pk_node_t)DROW(n).node_id)
+#define dnode_set_state(n, v)   (DROWW(n).state = (v))
+#define dnode_set_ip(n, v)      (DROWW(n).ip = (v))
+#define dnode_set_node_id(n, v) (DROWW(n).node_id = (v))
+#define DNODE_FOREACH(n)        for ((n) = 0; (n) < DNODE_MAX; (n)++)
 #ifndef DRPC_TABLE_OWNER
 #pragma GCC poison dnode_table
 #endif

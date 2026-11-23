@@ -77,7 +77,9 @@ static void dp_puthex(UW v)
 /* ------------------------------------------------------------------ */
 
 pk_node_t drpc_my_node = 0xFF;          /* 0xFF = not initialised            */
+#if !defined(DNODE_ROWS_IN_SLOTS)
 DNODE dnode_table[DNODE_MAX];
+#endif                                  /* N3 2b hosted: the rows are in swim.c's slots */
 
 #ifdef _TK_HOSTED_LIBC_
 /* N2b (pk_node_row.h): the extra rows of the per-node tables. A row once
@@ -415,8 +417,15 @@ static const RFUNC_ENTRY rfunc_table[] = {
 /* Local task creation for DRPC_CALL_CRE_TSK                          */
 /* ------------------------------------------------------------------ */
 
-/* Per-node caller-string storage (safe for the task's lifetime) */
-static char caller_strs[DNODE_MAX][4];
+/* Per-node caller-string storage (safe for the task's lifetime).
+ * N3 2b hosted: sized by the 8-bit wire id (256), not by DNODE_MAX, so it
+ * does not grow with the fleet; ids >= 100 get their third digit. */
+#if defined(DNODE_ROWS_IN_SLOTS)
+#define CALLER_STRS_N 256
+#else
+#define CALLER_STRS_N DNODE_MAX
+#endif
+static char caller_strs[CALLER_STRS_N][4];
 
 static W drpc_local_cre_tsk(UH func_id, INT pri, pk_node_t caller_node)
 {
@@ -428,15 +437,22 @@ static W drpc_local_cre_tsk(UH func_id, INT pri, pk_node_t caller_node)
         dp_puts("[drpc] unknown func_id 0x"); dp_puthex(func_id); dp_puts("\r\n");
         return E_PAR;
     }
-    if (caller_node < DNODE_MAX) {
+    if (caller_node < CALLER_STRS_N) {
         INT ci = 0;
+#if defined(DNODE_ROWS_IN_SLOTS)
+        if (caller_node >= 100)
+            caller_strs[caller_node][ci++] = (char)('0' + caller_node / 100);
+        if (caller_node >= 10)
+            caller_strs[caller_node][ci++] = (char)('0' + caller_node / 10 % 10);
+#else
         if (caller_node >= 10)
             caller_strs[caller_node][ci++] = (char)('0' + caller_node / 10);
+#endif
         caller_strs[caller_node][ci++] = (char)('0' + caller_node % 10);
         caller_strs[caller_node][ci]   = '\0';
     }
     T_CTSK ct = {
-        .exinf   = (VP)(caller_node < DNODE_MAX ? caller_strs[caller_node] : "?"),
+        .exinf   = (VP)(caller_node < CALLER_STRS_N ? caller_strs[caller_node] : "?"),
         .tskatr  = TA_HLNG | TA_RNG0,
         .task    = (FP)fn,
         .itskpri = (pri >= 1 && pri <= 10) ? pri : 4,
@@ -528,16 +544,16 @@ void drpc_rx(UW src_ip, UH src_port, const UB *data, UH len)
         pk_node_t nid = pkt->src_node;
         if (nid >= DNODE_MAX || nid == drpc_my_node) break;
 
-        UB old_state = dnode_table[nid].state;
+        UB old_state = DROW(nid).state;
 #if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
         /* N2c stage 2 (research/n2c-identity.md §10 1): a heartbeat carries no
          * incarnation, so it does not bring a DEAD peer back (SWIM does) */
         if (old_state == DNODE_DEAD) break;
 #endif
-        dnode_table[nid].node_id = nid;
-        dnode_table[nid].ip      = src_ip;
-        dnode_table[nid].missed  = 0;
-        dnode_table[nid].state   = DNODE_ALIVE;
+        DROWW(nid).node_id = nid;
+        DROWW(nid).ip      = src_ip;
+        DROWW(nid).missed  = 0;
+        DROWW(nid).state   = DNODE_ALIVE;
 
         if (old_state != DNODE_ALIVE) {
             dp_puts("[drpc] node "); dp_putdec(nid);
@@ -605,7 +621,7 @@ W drpc_call(pk_node_t dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
     }
 
     /* Early out: dead node */
-    if (dnode_table[dst_node].state == DNODE_DEAD) {
+    if (DROW(dst_node).state == DNODE_DEAD) {
         dp_puts("[drpc] node "); dp_putdec(dst_node); dp_puts(" is DEAD\r\n");
         return E_NOEXS;
     }
@@ -656,7 +672,7 @@ W drpc_call(pk_node_t dst_node, UH call_id, UW obj_id, W a0, W a1, W a2)
             break;
         }
         /* Abort if node died while we were waiting */
-        if (dnode_table[dst_node].state == DNODE_DEAD) {
+        if (DROW(dst_node).state == DNODE_DEAD) {
             dp_puts("[drpc] node died during call\r\n");
             result = E_NOEXS;
             break;
@@ -695,20 +711,24 @@ void drpc_init(pk_node_t my_node_id, UW my_ip)
      * but writing it out documents the dependency and keeps the
      * table correct under future allocation strategies that don't
      * use BSS (e.g. a dynamically allocated table). */
+#if defined(DNODE_ROWS_IN_SLOTS)
+    dnode_rows_reset();     /* N3 2b: only the rows that exist; no slot is taken */
+#else
     for (UB i = 0; i < DNODE_MAX; i++) {
-        dnode_table[i].state   = DNODE_UNKNOWN;
-        dnode_table[i].ip      = 0;
-        dnode_table[i].missed  = 0;
-        dnode_table[i].node_id = i;
+        DROWW(i).state   = DNODE_UNKNOWN;
+        DROWW(i).ip      = 0;
+        DROWW(i).missed  = 0;
+        DROWW(i).node_id = i;
     }
+#endif
 
     /* Register self in the table (N2b: a wide self has no row in dnode_table,
      * which holds the narrow peers; it is alive by being drpc_my_node). */
     if (PK_NODE_IN_TABLE(my_node_id)) {
-        dnode_table[my_node_id].node_id = my_node_id;
-        dnode_table[my_node_id].ip      = my_ip;
-        dnode_table[my_node_id].state   = DNODE_ALIVE;
-        dnode_table[my_node_id].missed  = 0;
+        DROWW(my_node_id).node_id = my_node_id;
+        DROWW(my_node_id).ip      = my_ip;
+        DROWW(my_node_id).state   = DNODE_ALIVE;
+        DROWW(my_node_id).missed  = 0;
     }
 
     /* Pre-seed ARP for the whole cluster. The virtual-cluster addressing
@@ -780,7 +800,7 @@ void drpc_task(INT stacd, void *exinf)
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
             /* Skip heartbeat to confirmed-dead nodes to reduce ARP traffic */
-            if (dnode_table[n].state == DNODE_DEAD) continue;
+            if (DROW(n).state == DNODE_DEAD) continue;
             udp_send(node_base_ip(n), DRPC_PORT, DRPC_PORT,
                      (const UB *)&hb, (UH)sizeof(hb));
         }
@@ -788,19 +808,19 @@ void drpc_task(INT stacd, void *exinf)
         /* Age nodes */
         for (UB n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
-            UB st = dnode_table[n].state;
+            UB st = DROW(n).state;
             if (st == DNODE_UNKNOWN || st == DNODE_DEAD) continue;
 
-            dnode_table[n].missed++;
+            DROW(n).missed++;
 
-            if (st == DNODE_ALIVE && dnode_table[n].missed >= SUSPECT_THRESH) {
-                dnode_table[n].state  = DNODE_SUSPECT;
-                dnode_table[n].missed = 0;
+            if (st == DNODE_ALIVE && DROW(n).missed >= SUSPECT_THRESH) {
+                DROWW(n).state  = DNODE_SUSPECT;
+                DROWW(n).missed = 0;
                 dp_puts("[drpc] node "); dp_putdec(n);
                 dp_puts(" suspect (no heartbeat for 3 s)\r\n");
-            } else if (st == DNODE_SUSPECT && dnode_table[n].missed >= DEAD_THRESH) {
-                dnode_table[n].state  = DNODE_DEAD;
-                dnode_table[n].missed = 0;
+            } else if (st == DNODE_SUSPECT && DROW(n).missed >= DEAD_THRESH) {
+                DROWW(n).state  = DNODE_DEAD;
+                DROWW(n).missed = 0;
                 dp_puts("[drpc] node "); dp_putdec(n);
                 dp_puts(" DEAD — cancelling pending calls\r\n");
                 pending_cancel_node(n);
@@ -818,15 +838,15 @@ void drpc_nodes_list(void)
 {
     dp_puts("[nodes]  ID  State    IP\r\n");
     for (UB n = 0; n < DNODE_MAX; n++) {
-        UB st = dnode_table[n].state;
+        UB st = DROW(n).state;
         if (n == drpc_my_node) {
             dp_puts("          "); dp_putdec(n);
             dp_puts("  (self)  "); dp_puts(ip_str(net_my_ip)); dp_puts("\r\n");
         } else if (st != DNODE_UNKNOWN) {
             dp_puts("          "); dp_putdec(n);
             dp_puts("  "); dp_puts(node_state_str(st));
-            dp_puts("  "); dp_puts(ip_str(dnode_table[n].ip));
-            dp_puts("  (missed="); dp_putdec(dnode_table[n].missed); dp_puts(")\r\n");
+            dp_puts("  "); dp_puts(ip_str(DROW(n).ip));
+            dp_puts("  (missed="); dp_putdec(DROW(n).missed); dp_puts(")\r\n");
         }
     }
 }
@@ -879,7 +899,7 @@ ER dtk_sig_sem(UW gsemid, INT cnt)
         return E_PAR;
     }
 
-    if (dnode_table[GOBJ_NODE(gsemid)].state == DNODE_DEAD) {
+    if (DROW(GOBJ_NODE(gsemid)).state == DNODE_DEAD) {
         dp_puts("[dsem] target node is DEAD\r\n");
         return E_NOEXS;
     }
@@ -916,7 +936,7 @@ ER dtk_infer(pk_node_t node_id, W sensor_packed, UB *class_out, TMO tmout)
     }
 
     if (node_id >= DNODE_MAX) return E_PAR;
-    if (dnode_table[node_id].state == DNODE_DEAD) return E_NOEXS;
+    if (DROW(node_id).state == DNODE_DEAD) return E_NOEXS;
 
     dp_puts("[dtk_infer] -> node "); dp_putdec(node_id); dp_puts("\r\n");
     W r = drpc_call(node_id, DRPC_CALL_INFER, 0, sensor_packed, 0, 0);
@@ -979,10 +999,10 @@ INT drpc_oob_self_test(void (*emit)(const char *))
     {
         UB tid = (UB)(DNODE_MAX - 1);
         if (tid == drpc_my_node) tid = (UB)(DNODE_MAX - 2);  /* avoid self */
-        UB saved = dnode_table[tid].state;
-        dnode_table[tid].state = DNODE_DEAD;
+        UB saved = DROW(tid).state;
+        DROWW(tid).state = DNODE_DEAD;
         W r = drpc_call(tid, DRPC_CALL_PING, 0, 0, 0, 0);
-        dnode_table[tid].state = saved;
+        DROWW(tid).state = saved;
         if (r != E_NOEXS) {
             emit("[drpc-oob] FAIL valid in-range id 63 mis-handled "
                  "(expected E_NOEXS via dead-check)\r\n"); fails++;

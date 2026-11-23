@@ -178,6 +178,9 @@ typedef struct {
     UB suspect;       /* consecutive no-response rounds                   */
     UB v2cap;         /* capability bit 2: it reads v2                    */
     UB rtt_valid;     /* 1 = measured at least once                       */
+#if defined(DNODE_ROWS_IN_SLOTS)
+    DNODE row;        /* N3 2b: drpc's row of this id (drpc.h DROW/DROWW) */
+#endif
 } SWIM_PEER;
 static SWIM_PEER sw_peer[SW_STORE];
 /* narrow id -> slot in sw_peer. The cap is set here, not only in swim_init:
@@ -261,7 +264,11 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
         s = nodemap_admit(&sw_map, n);
         for (INT i = 0; s < 0 && i < SW_STORE; i++) {
             if (!sw_map.used[i]) continue;
-            UB st = dnode_table[sw_map.id[i]].state;
+#if defined(DNODE_ROWS_IN_SLOTS)
+            UB st = sw_peer[i].row.state;      /* N3 2b: the holder's own row */
+#else
+            UB st = DROW(sw_map.id[i]).state;
+#endif
 #if defined(N3_NC_NO_HANDOVER)
             st = DNODE_ALIVE;   /* negative control of [n3-swim-cap] C8 */
 #endif
@@ -295,7 +302,10 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
         if (s >= SW_STORE) { nodemap_evict(&sw_map, s); s = -1; }   /* never: lowest free first */
         if (s < 0) { sw_refused++; PK_NOSW_LEAVE(); return NULL; }
         sw_peer[s] = (SWIM_PEER){ 0 };
-        INT g = sw_grave_find(n);      /* back from a grave: the old incarnation */
+#if defined(DNODE_ROWS_IN_SLOTS)
+        sw_peer[s].row.node_id = n;    /* UNKNOWN, ip 0: as drpc_init left it */
+#endif
+        INT g = sw_grave_find(n);     /* back from a grave: the old incarnation */
         if (g >= 0) { sw_peer[s].incarn = sw_grave[g].incarn; sw_grave[g].used = 0; }
     }
     PK_NOSW_LEAVE();
@@ -305,8 +315,39 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
 static SWIM_PEER *sw_take(pk_node_t n)
 {
     if (n >= DNODE_MAX) return NULL;
-    return sw_take_ex(n, dnode_table[n].state != DNODE_DEAD ? TRUE : FALSE);
+    return sw_take_ex(n, DROW(n).state != DNODE_DEAD ? TRUE : FALSE);
 }
+
+#if defined(DNODE_ROWS_IN_SLOTS)
+/* N3 2b (research/n3-dnode-region.md §2.2): drpc's rows live in the slots.
+ * rd: the row of n, or a zeroed row (UNKNOWN, ip 0) if n has no slot — a
+ * write through it is lost and the next call zeroes it again. wr: the row,
+ * taken like any SWIM word (full: a DEAD/UNKNOWN holder is handed over, or n
+ * outscores the weakest live one, else refused and counted in sw_refused);
+ * refused = a sink nobody reads. A slot handed over takes its row with it:
+ * the old id reads UNKNOWN to drpc from then on. */
+static DNODE dnode_rd_zero, dnode_wr_sink;
+DNODE *dnode_row_rd(pk_node_t n)
+{
+    SWIM_PEER *p = sw_get(n);
+    if (p) return &p->row;
+    dnode_rd_zero = (DNODE){ .node_id = n };
+    return &dnode_rd_zero;
+}
+DNODE *dnode_row_wr(pk_node_t n)
+{
+    SWIM_PEER *p = sw_take(n);
+    if (p) return &p->row;
+    dnode_wr_sink = (DNODE){ .node_id = n };
+    return &dnode_wr_sink;
+}
+/* drpc_init: every row that exists back to UNKNOWN (no slot is taken) */
+void dnode_rows_reset(void)
+{
+    for (INT i = 0; i < SW_STORE; i++)
+        sw_peer[i].row = (DNODE){ .node_id = (pk_node_t)(sw_map.used[i] ? sw_map.id[i] : 0) };
+}
+#endif
 
 static UB   sw_inc_get(pk_node_t n)
 {
@@ -697,7 +738,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
         /* N3 step 1: a rumour needs the peer's slot; none free = dropped */
         /* may push out a live holder: a live word about a peer not held DEAD, or a
          * word NEWER than the peer's grave (it came back: C9) */
-        if (!sw_take_ex(nid, (st != DNODE_DEAD && (dnode_table[nid].state != DNODE_DEAD
+        if (!sw_take_ex(nid, (st != DNODE_DEAD && (DROW(nid).state != DNODE_DEAD
                                                    || sw_grave_newer(nid, inc_in))) ? TRUE : FALSE))
             continue;
 #endif
@@ -722,12 +763,12 @@ static void gossip_apply(const SWIM_PKT *pkt)
          * measures directly within a couple of rounds. A DEAD rumour about
          * an UNKNOWN peer is ignored (we never saw it alive — gossiping it dead
          * would only seed a grave). */
-        if (dnode_table[nid].state == DNODE_UNKNOWN &&
+        if (DROW(nid).state == DNODE_UNKNOWN &&
             (st == DNODE_ALIVE || st == DNODE_SUSPECT)) {
-            dnode_table[nid].node_id = nid;
-            dnode_table[nid].ip      = swim_node_ip(nid);
-            dnode_table[nid].state   = st;
-            dnode_table[nid].missed  = 0;
+            DROWW(nid).node_id = nid;
+            DROWW(nid).ip      = swim_node_ip(nid);
+            DROWW(nid).state   = st;
+            DROWW(nid).missed  = 0;
             SW_INC_SET(nid, inc_in);
             SW_SUS_SET(nid, 0);
             /* N-2b / T-fix-a: adopt the peer's self-declared capability bits
@@ -747,7 +788,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
         }
 
         /* anti-stale: accept only if (incarnation,state) supersedes our view */
-        if (!gossip_supersedes(inc_in, st, SW_INC(nid), dnode_table[nid].state)) {
+        if (!gossip_supersedes(inc_in, st, SW_INC(nid), DROW(nid).state)) {
 #if defined(_TK_HOSTED_LIBC_) && !defined(N2_NC_V2DIRECT_NO)
             /* N2 (ii)(a), audit-147: an old relay drops bit 2, and the peer's
              * own word at the same incarnation loses the gate above, so take
@@ -774,14 +815,14 @@ static void gossip_apply(const SWIM_PKT *pkt)
         region_set_teacher_capable(nid, teacher_in ? TRUE : FALSE);
         V2CAP_ADOPT(nid, pkt->gossip[i].capability);       /* N2 (ii)(a): bit 2 */
 
-        if (dnode_table[nid].state == st) {
+        if (DROW(nid).state == st) {
             /* incarnation bumped, state same: still relay the fresh entry so
              * the (possibly changed) capability keeps spreading epidemically. */
             gossip_add(nid, st, inc_in, cap_byte(nid));
             continue;
         }
 
-        { UB oldst = dnode_table[nid].state; dnode_table[nid].state = st;
+        { UB oldst = DROW(nid).state; DROWW(nid).state = st;
           sw_note(nid, oldst, st);
 #if defined(_TK_HOSTED_LIBC_)
           /* N2c stage 2: the only way back from DEAD is the peer's own newer
@@ -790,7 +831,7 @@ static void gossip_apply(const SWIM_PKT *pkt)
               sw_puts("[swim] node "); sw_putdec(nid);
               sw_puts(" back at incarnation "); sw_putdec(inc_in);
               sw_puts(" (dead at "); sw_putdec(inc_was); sw_puts(")\r\n");
-              dnode_table[nid].missed = 0;
+              DROWW(nid).missed = 0;
               SW_SUS_SET(nid, 0);
               gossip_add(nid, st, inc_in, cap_byte(nid));
               replica_push_to(nid);
@@ -946,7 +987,7 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
      * Tell it instead: queue DEAD@k so it hears it and refutes with k+1.
      * gossip_add renews the TTL on every such packet, so a peer that never
      * refutes (an old build) keeps the rumour going (the limit, §10). */
-    if (snid < DNODE_MAX && snid != drpc_my_node && dnode_table[snid].state == DNODE_DEAD) {
+    if (snid < DNODE_MAX && snid != drpc_my_node && DROW(snid).state == DNODE_DEAD) {
 #if !defined(N2C_NC_NO_TELL)
         gossip_add(snid, DNODE_DEAD, SW_INC(snid), cap_byte(snid));
 #endif
@@ -959,11 +1000,11 @@ void swim_rx(UW src_ip, UH src_port, const UB *data, UH len)
         snid = DNODE_MAX;
 #endif
     if (snid < DNODE_MAX && snid != drpc_my_node) {
-        UB old = dnode_table[snid].state;
-        dnode_table[snid].ip     = src_ip;
-        dnode_table[snid].state  = DNODE_ALIVE;
+        UB old = DROW(snid).state;
+        DROWW(snid).ip     = src_ip;
+        DROWW(snid).state  = DNODE_ALIVE;
         if (old != DNODE_ALIVE) sw_note(snid, old, DNODE_ALIVE);
-        dnode_table[snid].missed = 0;
+        DROWW(snid).missed = 0;
         SW_SUS_SET(snid, 0);
         if (old != DNODE_ALIVE) {
             sw_puts("[swim] node "); sw_putdec(snid);
@@ -1063,7 +1104,7 @@ static pk_node_t pick_probe_target(void)
         if (!sw_map.used[probe_cursor]) continue;
         pk_node_t id = (pk_node_t)sw_map.id[probe_cursor];
         if (id == drpc_my_node) continue;
-        if (dnode_table[id].state != DNODE_UNKNOWN) return id;
+        if (DROW(id).state != DNODE_UNKNOWN) return id;
     }
     for (INT i = 0; i < DNODE_MAX; i++) {
         if ((pk_node_t)i != drpc_my_node) return (pk_node_t)i;
@@ -1078,7 +1119,7 @@ static void pick_helpers(pk_node_t exclude, pk_node_t helpers[SWIM_K_HELPERS], I
         if (!sw_map.used[i]) continue;
         pk_node_t id = (pk_node_t)sw_map.id[i];
         if (id == drpc_my_node || id == exclude) continue;
-        if (dnode_table[id].state == DNODE_ALIVE) helpers[(*cnt)++] = id;
+        if (DROW(id).state == DNODE_ALIVE) helpers[(*cnt)++] = id;
     }
 }
 #else
@@ -1090,7 +1131,7 @@ static pk_node_t pick_probe_target(void)
     for (UB tries = 0; tries < DNODE_MAX; tries++) {
         probe_cursor = (UB)((probe_cursor + 1) % DNODE_MAX);
         if (probe_cursor == drpc_my_node) continue;
-        if (dnode_table[probe_cursor].state != DNODE_UNKNOWN) return probe_cursor;
+        if (DROW(probe_cursor).state != DNODE_UNKNOWN) return probe_cursor;
     }
     /* Fallback: any non-self node (trigger initial discovery) */
     for (UB i = 0; i < DNODE_MAX; i++) {
@@ -1104,7 +1145,7 @@ static void pick_helpers(pk_node_t exclude, pk_node_t helpers[SWIM_K_HELPERS], I
     *cnt = 0;
     for (UB i = 0; i < DNODE_MAX && *cnt < SWIM_K_HELPERS; i++) {
         if (i == drpc_my_node || i == exclude) continue;
-        if (dnode_table[i].state == DNODE_ALIVE) helpers[(*cnt)++] = i;
+        if (DROW(i).state == DNODE_ALIVE) helpers[(*cnt)++] = i;
     }
 }
 #endif
@@ -1119,11 +1160,11 @@ static void swim_probe_ok(pk_node_t target, const char *how)
 #if defined(_TK_HOSTED_LIBC_) && !defined(N2C_NC_RX_REVIVE)
     /* N2c stage 2: an answer from a DEAD peer does not revive it; the answer
      * itself went through swim_rx, which told it (DEAD@k) */
-    if (dnode_table[target].state == DNODE_DEAD) return;
+    if (DROW(target).state == DNODE_DEAD) return;
 #endif
-    if (dnode_table[target].state != DNODE_ALIVE) {
-        UB oldst = dnode_table[target].state;
-        dnode_table[target].state = DNODE_ALIVE;
+    if (DROW(target).state != DNODE_ALIVE) {
+        UB oldst = DROW(target).state;
+        DROWW(target).state = DNODE_ALIVE;
         sw_note(target, oldst, DNODE_ALIVE);
         sw_puts("[swim] node "); sw_putdec(target);
         sw_puts(how);
@@ -1226,9 +1267,9 @@ void swim_task(INT stacd, void *exinf)
 #if defined(_TK_HOSTED_LIBC_)
             swim_probe_ok(target, " -> ALIVE (direct probe)\r\n");
 #else   /* bare metal: the same steps written out (crown: one function moved .text) */
-            if (dnode_table[target].state != DNODE_ALIVE) {
-                UB oldst = dnode_table[target].state;
-                dnode_table[target].state = DNODE_ALIVE;
+            if (DROW(target).state != DNODE_ALIVE) {
+                UB oldst = DROW(target).state;
+                DROWW(target).state = DNODE_ALIVE;
                 sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (direct probe)\r\n");
@@ -1262,9 +1303,9 @@ void swim_task(INT stacd, void *exinf)
 #if defined(_TK_HOSTED_LIBC_)
             swim_probe_ok(target, " -> ALIVE (indirect probe)\r\n");
 #else   /* bare metal: the same steps written out (crown: one function moved .text) */
-            if (dnode_table[target].state != DNODE_ALIVE) {
-                UB oldst = dnode_table[target].state;
-                dnode_table[target].state = DNODE_ALIVE;
+            if (DROW(target).state != DNODE_ALIVE) {
+                UB oldst = DROW(target).state;
+                DROWW(target).state = DNODE_ALIVE;
                 sw_note(target, oldst, DNODE_ALIVE);
                 sw_puts("[swim] node "); sw_putdec(target);
                 sw_puts(" -> ALIVE (indirect probe)\r\n");
@@ -1279,7 +1320,7 @@ void swim_task(INT stacd, void *exinf)
 
         /* ---- Step 3: no response — escalate state ---- */
         SW_SUS_INC(target);
-        UB st = dnode_table[target].state;
+        UB st = DROW(target).state;
 
         /* UNKNOWN nodes are not "suspected dead" — we've simply never
          * confirmed them alive yet. Gossiping a never-seen node as SUSPECT
@@ -1291,18 +1332,18 @@ void swim_task(INT stacd, void *exinf)
          * before SUSPECT: with only 2 nodes there are no indirect helpers,
          * so a single dropped UDP datagram must not be a death sentence. */
         if (st == DNODE_ALIVE && SW_SUS(target) >= SWIM_SUSPECT_LIMIT) {
-            dnode_table[target].state  = DNODE_SUSPECT;
+            DROWW(target).state  = DNODE_SUSPECT;
             sw_note(target, DNODE_ALIVE, DNODE_SUSPECT);
-            dnode_table[target].missed = 0;
+            DROWW(target).missed = 0;
             SW_SUS_SET(target, 0);   /* count fresh toward DEAD */
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> SUSPECT (no response)\r\n");
             gossip_add(target, DNODE_SUSPECT, SW_INC(target),
                        cap_byte(target));  /* N-2b/T-fix-a relay (both axes) */
         } else if (st == DNODE_SUSPECT && SW_SUS(target) >= SWIM_DEAD_LIMIT) {
-            dnode_table[target].state  = DNODE_DEAD;
+            DROWW(target).state  = DNODE_DEAD;
             sw_note(target, DNODE_SUSPECT, DNODE_DEAD);
-            dnode_table[target].missed = 0;
+            DROWW(target).missed = 0;
             SW_SUS_SET(target, 0);
             sw_puts("[swim] node "); sw_putdec(target);
             sw_puts(" -> DEAD\r\n");
@@ -1373,10 +1414,10 @@ void swim_nodes_print(void)
         if (n == drpc_my_node) {
             sw_puts("            "); sw_putdec(n);
             sw_puts("  SELF     "); sw_puts(ip_str(NET_MY_IP)); sw_puts("\r\n");
-        } else if (dnode_table[n].state != DNODE_UNKNOWN) {
+        } else if (DROW(n).state != DNODE_UNKNOWN) {
             sw_puts("            "); sw_putdec(n);
-            sw_puts("  "); sw_puts(state_str(dnode_table[n].state));
-            sw_puts("  "); sw_puts(ip_str(dnode_table[n].ip));
+            sw_puts("  "); sw_puts(state_str(DROW(n).state));
+            sw_puts("  "); sw_puts(ip_str(DROW(n).ip));
             {
                 UW rtt = swim_rtt_ms(n);   /* sim_zone ペナルティ込み */
                 if (rtt != 0xFFFFFFFFUL) {
@@ -1385,7 +1426,7 @@ void swim_nodes_print(void)
                     sw_puts("  rtt=?");
                 }
             }
-            if (dnode_table[n].state == DNODE_SUSPECT) {
+            if (DROW(n).state == DNODE_SUSPECT) {
                 sw_puts("  (suspect_cnt="); sw_putdec(SW_SUS(n)); sw_puts(")");
             }
             sw_puts("\r\n");
@@ -1730,7 +1771,7 @@ static UH swim_wide_ping_narrow(pk_node_t me)
         swim_nping_cur = (swim_nping_cur + 1) % SW_STORE;
         if (!sw_map.used[swim_nping_cur]) continue;
         pk_node_t id = (pk_node_t)sw_map.id[swim_nping_cur];
-        if (dnode_table[id].state != DNODE_ALIVE) continue;
+        if (DROW(id).state != DNODE_ALIVE) continue;
         if (++swim_wide_seq == 0) swim_wide_seq = 1;
         seq = swim_wide_seq;
         sw_peer[swim_nping_cur].nping_seq = seq; sw_peer[swim_nping_cur].nping_ms = swim_wide_now();
@@ -2585,9 +2626,9 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     drpc_my_node            = SELF;
     gq_cnt                  = 0;            /* clear the gossip queue */
     my_incarnation          = 0;
-    dnode_table[SELF].state = DNODE_ALIVE;
+    DROWW(SELF).state = DNODE_ALIVE;
     SWT_INC(SELF)      = 0;
-    dnode_table[PEER].state = DNODE_UNKNOWN;
+    DROWW(PEER).state = DNODE_UNKNOWN;
     SWT_INC(PEER)      = 0;
 
     /* (a) a STALE DEAD rumor about SELF at incarnation 1 ------------- */
@@ -2599,7 +2640,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
         p.gossip[0].incarnation = 1;
         gossip_apply(&p);
 
-        if (dnode_table[SELF].state == DNODE_DEAD) {
+        if (DROW(SELF).state == DNODE_DEAD) {
             say("[swim-incarn] FAIL self-marked-dead (stale DEAD rumor killed me)\r\n");
             fails++;
         }
@@ -2618,7 +2659,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     }
 
     /* (b) peer anti-stale LWW: hold PEER ALIVE @ incarnation 5 ------- */
-    dnode_table[PEER].state = DNODE_ALIVE;
+    DROWW(PEER).state = DNODE_ALIVE;
     SWT_INC(PEER)      = 5;
     {
         /* stale LOWER-incarnation DEAD must be IGNORED */
@@ -2628,7 +2669,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
         p.gossip[0].state       = DNODE_DEAD;
         p.gossip[0].incarnation = 3;
         gossip_apply(&p);
-        if (dnode_table[PEER].state != DNODE_ALIVE) {
+        if (DROW(PEER).state != DNODE_ALIVE) {
             say("[swim-incarn] FAIL peer-killed-by-stale-rumor (LWW dead)\r\n");
             fails++;
         }
@@ -2641,7 +2682,7 @@ INT swim_incarn_self_test(void (*emit)(const char *))
         p.gossip[0].state       = DNODE_DEAD;
         p.gossip[0].incarnation = 6;
         gossip_apply(&p);
-        if (dnode_table[PEER].state != DNODE_DEAD) {
+        if (DROW(PEER).state != DNODE_DEAD) {
             say("[swim-incarn] FAIL fresh-rumor-not-accepted (LWW stuck)\r\n");
             fails++;
         }
@@ -2651,8 +2692,8 @@ INT swim_incarn_self_test(void (*emit)(const char *))
     drpc_my_node            = saved_my;
     my_incarnation          = saved_inc;
     gq_cnt                  = saved_gq_cnt;
-    dnode_table[SELF].state = DNODE_UNKNOWN;
-    dnode_table[PEER].state = DNODE_UNKNOWN;
+    DROWW(SELF).state = DNODE_UNKNOWN;
+    DROWW(PEER).state = DNODE_UNKNOWN;
     SWT_INC(SELF)      = 0;
     SWT_INC(PEER)      = 0;
 
@@ -2698,9 +2739,9 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     drpc_my_node            = SELF;
     gq_cnt                  = 0;
     my_incarnation          = 0;
-    dnode_table[SELF].state = DNODE_ALIVE;  SWT_INC(SELF) = 0;
-    dnode_table[X].state    = DNODE_UNKNOWN; SWT_INC(X)   = 0;
-    dnode_table[Y].state    = DNODE_UNKNOWN; SWT_INC(Y)   = 0;
+    DROWW(SELF).state = DNODE_ALIVE;  SWT_INC(SELF) = 0;
+    DROWW(X).state    = DNODE_UNKNOWN; SWT_INC(X)   = 0;
+    DROWW(Y).state    = DNODE_UNKNOWN; SWT_INC(Y)   = 0;
     saved_capX    = region_is_super_capable(X)    ? 1 : 0;
     saved_capSELF = region_is_super_capable(SELF) ? 1 : 0;
     region_set_super_capable(X, FALSE);
@@ -2762,7 +2803,7 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
      * W's own word, and it says 0 -> stays 0. */
     {
         const UB W = 7;
-        dnode_table[W].state = DNODE_UNKNOWN; SWT_INC(W) = 0;
+        DROWW(W).state = DNODE_UNKNOWN; SWT_INC(W) = 0;
         region_set_super_capable(W, FALSE);
         SWIM_PKT p = { 0 };
         p.gossip_cnt            = 1;
@@ -2781,14 +2822,14 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
             say("[cap-gossip] FAIL falsifiable: cap=1 and cap=0 gave same result\r\n");
             fails++;
         }
-        dnode_table[W].state = DNODE_UNKNOWN; SWT_INC(W) = 0;
+        DROWW(W).state = DNODE_UNKNOWN; SWT_INC(W) = 0;
         region_set_super_capable(W, FALSE);
     }
 
     /* [cap-gossip-staleness] hold X capable @ incarnation 5; a STALE
      * lower-incarnation rumor (inc=3) that would flip X to NON-capable must
      * be IGNORED — capability does not regress on a stale rumor. */
-    dnode_table[X].state = DNODE_ALIVE; SWT_INC(X) = 5;
+    DROWW(X).state = DNODE_ALIVE; SWT_INC(X) = 5;
     region_set_super_capable(X, TRUE);
     {
         SWIM_PKT p = { 0 };
@@ -2822,9 +2863,9 @@ INT swim_cap_gossip_self_test(void (*emit)(const char *))
     drpc_my_node            = saved_my;
     my_incarnation          = saved_inc;
     gq_cnt                  = saved_gq_cnt;
-    dnode_table[SELF].state = DNODE_UNKNOWN;
-    dnode_table[X].state    = DNODE_UNKNOWN;
-    dnode_table[Y].state    = DNODE_UNKNOWN;
+    DROWW(SELF).state = DNODE_UNKNOWN;
+    DROWW(X).state    = DNODE_UNKNOWN;
+    DROWW(Y).state    = DNODE_UNKNOWN;
     SWT_INC(SELF) = 0; SWT_INC(X) = 0; SWT_INC(Y) = 0;
     SWT_RTTV(X) = 0; SWT_RTTV(Y) = 0;        /* drop injected RTT */
     region_set_super_capable(X, saved_capX ? TRUE : FALSE);
@@ -2880,9 +2921,9 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
     drpc_my_node            = SELF;
     gq_cnt                  = 0;
     my_incarnation          = 0;
-    dnode_table[SELF].state = DNODE_ALIVE;  SWT_INC(SELF) = 0;
-    dnode_table[X].state    = DNODE_UNKNOWN; SWT_INC(X)   = 0;
-    dnode_table[Y].state    = DNODE_UNKNOWN; SWT_INC(Y)   = 0;
+    DROWW(SELF).state = DNODE_ALIVE;  SWT_INC(SELF) = 0;
+    DROWW(X).state    = DNODE_UNKNOWN; SWT_INC(X)   = 0;
+    DROWW(Y).state    = DNODE_UNKNOWN; SWT_INC(Y)   = 0;
     saved_tchX    = region_is_teacher_capable(X)    ? 1 : 0;
     saved_tchSELF = region_is_teacher_capable(SELF) ? 1 : 0;
     region_set_teacher_capable(X, FALSE);
@@ -2952,14 +2993,14 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
      * X DEAD (drops out of membership) → region_teacher() must hand off to the
      * next teacher-capable member Y, with NO election call. */
     {
-        UB oldst = dnode_table[X].state;
-        dnode_table[X].state = DNODE_DEAD;
+        UB oldst = DROW(X).state;
+        DROWW(X).state = DNODE_DEAD;
         UB tn = region_teacher();
         if (tn != Y) {
             say("[teacher-gossip] FAIL survives-death: X dead but teacher did not hand off to Y\r\n");
             fails++;
         }
-        dnode_table[X].state = oldst;   /* restore for the staleness arm */
+        DROWW(X).state = oldst;   /* restore for the staleness arm */
     }
 
     /* [teacher-falsifiable] CONTRAST: a node W that gossips teacher-bit=0
@@ -2969,7 +3010,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
      * proves the apply reads bit 1 specifically, not "any nonzero byte". */
     {
         const UB W = 7;
-        dnode_table[W].state = DNODE_UNKNOWN; SWT_INC(W) = 0;
+        DROWW(W).state = DNODE_UNKNOWN; SWT_INC(W) = 0;
         region_set_teacher_capable(W, FALSE);
         region_set_super_capable(W, FALSE);
         SWIM_PKT p = { 0 };
@@ -2995,7 +3036,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
             say("[teacher-gossip] FAIL falsifiable: teacher=1 and teacher=0 gave same result\r\n");
             fails++;
         }
-        dnode_table[W].state = DNODE_UNKNOWN; SWT_INC(W) = 0;
+        DROWW(W).state = DNODE_UNKNOWN; SWT_INC(W) = 0;
         region_set_teacher_capable(W, FALSE);
         region_set_super_capable(W, FALSE);
     }
@@ -3003,7 +3044,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
     /* [teacher-staleness] hold X teacher @ incarnation 5; a STALE
      * lower-incarnation rumor (inc=3) that would flip X to NON-teacher must be
      * IGNORED — teacher-capability does not regress on a stale rumor. */
-    dnode_table[X].state = DNODE_ALIVE; SWT_INC(X) = 5;
+    DROWW(X).state = DNODE_ALIVE; SWT_INC(X) = 5;
     region_set_teacher_capable(X, TRUE);
     {
         SWIM_PKT p = { 0 };
@@ -3043,9 +3084,9 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
      * Falsifiable: if the relay drops bit 1, the queued capability is 0. */
     {
         const UB Z = 9;
-        UB saved_Zst  = dnode_table[Z].state;
+        UB saved_Zst  = DROW(Z).state;
         UB saved_Zinc = SWT_INC(Z);
-        dnode_table[Z].state    = DNODE_UNKNOWN;   /* not ALIVE -> triggers relay */
+        DROWW(Z).state    = DNODE_UNKNOWN;   /* not ALIVE -> triggers relay */
         SWT_INC(Z)         = 2;
         region_set_teacher_capable(Z, TRUE);       /* Z is a known teacher locally */
         region_set_super_capable(Z, FALSE);        /* but NOT a supernode          */
@@ -3069,7 +3110,7 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
             say("[teacher-gossip] FAIL rx-relay: rediscovery relay dropped teacher bit 1\r\n");
             fails++;
         }
-        dnode_table[Z].state = saved_Zst; SWT_INC(Z) = saved_Zinc;
+        DROWW(Z).state = saved_Zst; SWT_INC(Z) = saved_Zinc;
         region_set_teacher_capable(Z, FALSE);
         region_set_super_capable(Z, FALSE);
     }
@@ -3078,9 +3119,9 @@ INT swim_teacher_gossip_self_test(void (*emit)(const char *))
     drpc_my_node            = saved_my;
     my_incarnation          = saved_inc;
     gq_cnt                  = saved_gq_cnt;
-    dnode_table[SELF].state = DNODE_UNKNOWN;
-    dnode_table[X].state    = DNODE_UNKNOWN;
-    dnode_table[Y].state    = DNODE_UNKNOWN;
+    DROWW(SELF).state = DNODE_UNKNOWN;
+    DROWW(X).state    = DNODE_UNKNOWN;
+    DROWW(Y).state    = DNODE_UNKNOWN;
     SWT_INC(SELF) = 0; SWT_INC(X) = 0; SWT_INC(Y) = 0;
     SWT_RTTV(X) = 0; SWT_RTTV(Y) = 0;        /* drop injected RTT */
     region_set_teacher_capable(X, saved_tchX ? TRUE : FALSE);
@@ -3135,7 +3176,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
 
     const UB SELF = 2;   /* the node that must self-recognize as teacher */
 
-    UB saved_st        = dnode_table[SELF].state;
+    UB saved_st        = DROW(SELF).state;
     UB saved_inc_self  = SWT_INC(SELF);
     UB saved_tch       = region_is_teacher_capable(SELF) ? 1 : 0;
     UB saved_sup       = region_is_super_capable(SELF)   ? 1 : 0;
@@ -3144,7 +3185,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
     drpc_my_node            = SELF;
     gq_cnt                  = 0;
     my_incarnation          = 0;
-    dnode_table[SELF].state = DNODE_ALIVE;  SWT_INC(SELF) = 0;
+    DROWW(SELF).state = DNODE_ALIVE;  SWT_INC(SELF) = 0;
     /* SELF must be a region MEMBER for region_teacher() to consider it:
      * recompute counts a member by RTT<=tau; a node's own RTT is 0 in the
      * live fleet, but inject one explicitly so the cert is self-contained. */
@@ -3206,7 +3247,7 @@ INT swim_selfelect_self_test(void (*emit)(const char *))
     drpc_my_node            = saved_my;
     my_incarnation          = saved_inc;
     gq_cnt                  = saved_gq_cnt;
-    dnode_table[SELF].state = saved_st;
+    DROWW(SELF).state = saved_st;
     SWT_INC(SELF)      = saved_inc_self;
     SWT_RTTV(SELF)         = saved_rttv;
     region_set_teacher_capable(SELF, saved_tch ? TRUE : FALSE);
@@ -3249,7 +3290,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
     static GOSSIP_QUEUED saved_gq[GOSSIP_Q_MAX];
     for (INT i = 0; i < GOSSIP_Q_MAX; i++) saved_gq[i] = gq[i];
     for (INT k = 0; k < 4; k++) {
-        sst[k] = dnode_table[ids[k]].state; sinc[k] = SWT_INC(ids[k]);
+        sst[k] = DROW(ids[k]).state; sinc[k] = SWT_INC(ids[k]);
         ssup[k] = region_is_super_capable(ids[k]) ? 1 : 0;
         stch[k] = region_is_teacher_capable(ids[k]) ? 1 : 0;
         sv2[k]  = v2cap_get(ids[k]);
@@ -3257,7 +3298,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
 
     drpc_my_node = SELF; my_incarnation = 0; gq_cnt = 0;
     for (INT k = 0; k < 4; k++) {
-        dnode_table[ids[k]].state = DNODE_UNKNOWN; SWT_INC(ids[k]) = 0;
+        DROWW(ids[k]).state = DNODE_UNKNOWN; SWT_INC(ids[k]) = 0;
         region_set_super_capable(ids[k], FALSE);
         region_set_teacher_capable(ids[k], FALSE);
         v2cap_set(ids[k], 0);
@@ -3349,7 +3390,7 @@ INT swim_v2cap_self_test(void (*emit)(const char *))
 #undef V2C_FAIL
 
     for (INT k = 0; k < 4; k++) {
-        dnode_table[ids[k]].state = sst[k]; SWT_INC(ids[k]) = sinc[k];
+        DROWW(ids[k]).state = sst[k]; SWT_INC(ids[k]) = sinc[k];
         region_set_super_capable(ids[k], ssup[k] ? TRUE : FALSE);
         region_set_teacher_capable(ids[k], stch[k] ? TRUE : FALSE);
         v2cap_set(ids[k], sv2[k]);
@@ -3419,15 +3460,15 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
 
     const UB SELF = 0;          /* the receiving node we simulate */
     const UB P    = 4;          /* the differently-versioned peer */
-    UB  saved_Pst  = dnode_table[P].state;
+    UB  saved_Pst  = DROW(P).state;
     UB  saved_Pinc = SWT_INC(P);
-    UW  saved_Pip  = dnode_table[P].ip;
+    UW  saved_Pip  = DROW(P).ip;
     UB  saved_capP = region_is_super_capable(P) ? 1 : 0;
 
     drpc_my_node            = SELF;
     gq_cnt                  = 0;
     my_incarnation          = 0;
-    dnode_table[SELF].state = DNODE_ALIVE; SWT_INC(SELF) = 0;
+    DROWW(SELF).state = DNODE_ALIVE; SWT_INC(SELF) = 0;
     region_set_super_capable(P, FALSE);
 
     /* The one packet (built once); legs flip only the fields named. P emits
@@ -3447,11 +3488,11 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
     base.gossip[0].capability  = 1;       /* bit0 = supernode-capable */
 
     /* [split-membership-crosses] (CURE): same-version packet -> P ALIVE. */
-    dnode_table[P].state = DNODE_UNKNOWN; SWT_INC(P) = 0;
+    DROWW(P).state = DNODE_UNKNOWN; SWT_INC(P) = 0;
     {
         SWIM_PKT p = base;
         swim_rx(swim_node_ip(P), SWIM_PORT, (const UB *)&p, (UH)sizeof(p));
-        if (dnode_table[P].state != DNODE_ALIVE) {
+        if (DROW(P).state != DNODE_ALIVE) {
             say("[no-fleet-split] FAIL split-membership-crosses: same-version peer not ALIVE\r\n");
             fails++;
         } else {
@@ -3474,13 +3515,13 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
      * (SWIM_VERSION+1) -> swim_rx():418 must DROP it; P must NOT be ALIVE.
      * The reset immediately-before is mandatory: without it a stale ALIVE
      * from the prior leg makes this assert vacuously pass. */
-    dnode_table[P].state = DNODE_UNKNOWN; SWT_INC(P) = 0;
+    DROWW(P).state = DNODE_UNKNOWN; SWT_INC(P) = 0;
     region_set_super_capable(P, FALSE);
     {
         SWIM_PKT p = base;
         p.version = (UB)(SWIM_VERSION + 1);   /* THE ONLY DIFFERENCE from leg 1 */
         swim_rx(swim_node_ip(P), SWIM_PORT, (const UB *)&p, (UH)sizeof(p));
-        if (dnode_table[P].state == DNODE_ALIVE) {
+        if (DROW(P).state == DNODE_ALIVE) {
             say("[no-fleet-split] FAIL split-partition-on-bump: breaking-version peer wrongly ALIVE\r\n");
             fails++;
         } else {
@@ -3490,14 +3531,14 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
 
     /* [split-degrade-not-drop]: an OLD emitter (same version, capability==0)
      * is STILL marked ALIVE — zero degrades, never partitions. */
-    dnode_table[P].state = DNODE_UNKNOWN; SWT_INC(P) = 0;
+    DROWW(P).state = DNODE_UNKNOWN; SWT_INC(P) = 0;
     region_set_super_capable(P, FALSE);
     {
         SWIM_PKT p = base;
         p.gossip[0].incarnation = 2;          /* fresh so the rumor is accepted */
         p.gossip[0].capability  = 0;          /* OLD node sends zero */
         swim_rx(swim_node_ip(P), SWIM_PORT, (const UB *)&p, (UH)sizeof(p));
-        if (dnode_table[P].state != DNODE_ALIVE) {
+        if (DROW(P).state != DNODE_ALIVE) {
             say("[no-fleet-split] FAIL split-degrade-not-drop: old (cap=0) peer dropped from fleet\r\n");
             fails++;
         } else {
@@ -3509,10 +3550,10 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *))
     drpc_my_node            = saved_my;
     my_incarnation          = saved_inc;
     gq_cnt                  = saved_gq_cnt;
-    dnode_table[SELF].state = DNODE_UNKNOWN; SWT_INC(SELF) = 0;
-    dnode_table[P].state    = saved_Pst;
+    DROWW(SELF).state = DNODE_UNKNOWN; SWT_INC(SELF) = 0;
+    DROWW(P).state    = saved_Pst;
     SWT_INC(P)         = saved_Pinc;
-    dnode_table[P].ip       = saved_Pip;
+    DROWW(P).ip       = saved_Pip;
     region_set_super_capable(P, saved_capP ? TRUE : FALSE);
 
     if (fails == 0)
@@ -3562,7 +3603,7 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
     pk_node_t saved_my = drpc_my_node;
     UB  saved_inc  = my_incarnation;
     INT saved_gq   = gq_cnt;
-    UB  saved_st   = dnode_table[SELF].state;
+    UB  saved_st   = DROW(SELF).state;
     UB  saved_sinc = SWT_INC(SELF);
     UW  saved_last = self_scatter_last_ms;
     INT saved_prim = self_scatter_primed;
@@ -3571,7 +3612,7 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
     drpc_my_node            = SELF;
     my_incarnation          = 0;
     gq_cnt                  = 0;
-    dnode_table[SELF].state = DNODE_ALIVE;
+    DROWW(SELF).state = DNODE_ALIVE;
     SWT_INC(SELF)      = 0;
 
     /* clean-slate the throttle bookkeeping so the burst is measured fresh */
@@ -3630,7 +3671,7 @@ INT swim_selfsuspect_self_test(void (*emit)(const char *))
     drpc_my_node            = saved_my;
     my_incarnation          = saved_inc;
     gq_cnt                  = saved_gq;
-    dnode_table[SELF].state = saved_st;
+    DROWW(SELF).state = saved_st;
     SWT_INC(SELF)      = saved_sinc;
     self_scatter_last_ms    = saved_last;
     self_scatter_primed     = saved_prim;
@@ -3684,33 +3725,33 @@ INT swim_life_self_test(void (*emit)(const char *))
     pk_node_t saved_my = drpc_my_node;
     UB saved_inc = my_incarnation;
     INT saved_gq = gq_cnt;
-    UW saved_ip = dnode_table[PEER].ip;
-    UB saved_st = dnode_table[PEER].state, saved_pinc = SWT_INC(PEER);
+    UW saved_ip = DROW(PEER).ip;
+    UB saved_st = DROW(PEER).state, saved_pinc = SWT_INC(PEER);
     SWIM_PKT p;
     DRPC_PKT hb;
 #define LIFE(cond, what) do { if (cond) { say("[swim-life] ok   "); } else { fails++; say("[swim-life] RED  "); } \
                               say(what); say("\r\n"); } while (0)
-#define LIFE_SET(st, inc) do { dnode_table[PEER].state = (st); SWT_INC(PEER) = (inc); \
+#define LIFE_SET(st, inc) do { DROWW(PEER).state = (st); SWT_INC(PEER) = (inc); \
                                SWT_SUS(PEER) = 0; gq_cnt = 0; } while (0)
     if (drpc_my_node == PEER || drpc_my_node == THIRD) drpc_my_node = 1;
 
     LIFE_SET(DNODE_DEAD, 5);
     life_pkt(&p, PEER, 0, 0, 0, 0); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
-    LIFE(dnode_table[PEER].state == DNODE_DEAD, "a1s DEAD@5 + a packet with no word about itself: stays DEAD");
+    LIFE(DROW(PEER).state == DNODE_DEAD, "a1s DEAD@5 + a packet with no word about itself: stays DEAD");
     LIFE(gq_find_incarn(PEER, DNODE_DEAD) == 5, "a1q DEAD@5 is queued (told)");
 
     LIFE_SET(DNODE_DEAD, 5);
     life_pkt(&p, PEER, 1, PEER, DNODE_ALIVE, 5); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
-    LIFE(dnode_table[PEER].state == DNODE_DEAD, "a2s DEAD@5 + its own ALIVE@5: stays DEAD");
+    LIFE(DROW(PEER).state == DNODE_DEAD, "a2s DEAD@5 + its own ALIVE@5: stays DEAD");
     LIFE(gq_find_incarn(PEER, DNODE_DEAD) == 5, "a2q DEAD@5 is queued (told)");
 
     LIFE_SET(DNODE_DEAD, 5);
     life_pkt(&p, PEER, 1, PEER, DNODE_ALIVE, 6); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
-    LIFE(dnode_table[PEER].state == DNODE_ALIVE && SWT_INC(PEER) == 6, "b DEAD@5 + its own ALIVE@6: ALIVE at 6");
+    LIFE(DROW(PEER).state == DNODE_ALIVE && SWT_INC(PEER) == 6, "b DEAD@5 + its own ALIVE@6: ALIVE at 6");
 
     LIFE_SET(DNODE_DEAD, 5);
     swim_probe_ok(PEER, " -> ALIVE (life test probe)\r\n");
-    LIFE(dnode_table[PEER].state == DNODE_DEAD, "cp DEAD@5 + a probe answer: stays DEAD");
+    LIFE(DROW(PEER).state == DNODE_DEAD, "cp DEAD@5 + a probe answer: stays DEAD");
     LIFE_SET(DNODE_DEAD, 5);
     {
         UB *hbb = (UB *)&hb;
@@ -3719,15 +3760,15 @@ INT swim_life_self_test(void (*emit)(const char *))
         hb.src_node = PEER; hb.dst_node = 0xFF;
         drpc_rx(0x0A010006UL, DRPC_PORT, (const UB *)&hb, sizeof hb);
     }
-    LIFE(dnode_table[PEER].state == DNODE_DEAD, "ch DEAD@5 + a drpc HEARTBEAT: stays DEAD");
+    LIFE(DROW(PEER).state == DNODE_DEAD, "ch DEAD@5 + a drpc HEARTBEAT: stays DEAD");
 
     LIFE_SET(DNODE_DEAD, 255);
     life_pkt(&p, THIRD, 1, PEER, DNODE_ALIVE, 0); gossip_apply(&p);
-    LIFE(dnode_table[PEER].state == DNODE_ALIVE, "d DEAD@255 + rumour ALIVE@0: ALIVE");
+    LIFE(DROW(PEER).state == DNODE_ALIVE, "d DEAD@255 + rumour ALIVE@0: ALIVE");
 
     LIFE_SET(DNODE_ALIVE, 0);
     life_pkt(&p, THIRD, 1, PEER, DNODE_DEAD, 255); gossip_apply(&p);
-    LIFE(dnode_table[PEER].state == DNODE_ALIVE, "e ALIVE@0 + rumour DEAD@255: ignored");
+    LIFE(DROW(PEER).state == DNODE_ALIVE, "e ALIVE@0 + rumour DEAD@255: ignored");
 
     {
         pk_node_t me = drpc_my_node;
@@ -3740,12 +3781,12 @@ INT swim_life_self_test(void (*emit)(const char *))
 
     LIFE_SET(DNODE_SUSPECT, 5);
     life_pkt(&p, PEER, 0, 0, 0, 0); swim_rx(0x0A010006UL, SWIM_PORT, (const UB *)&p, sizeof p);
-    LIFE(dnode_table[PEER].state == DNODE_ALIVE, "g SUSPECT@5 + a packet from it: ALIVE");
+    LIFE(DROW(PEER).state == DNODE_ALIVE, "g SUSPECT@5 + a packet from it: ALIVE");
 #undef LIFE
 #undef LIFE_SET
 
     drpc_my_node = saved_my; my_incarnation = saved_inc; gq_cnt = saved_gq;
-    dnode_table[PEER].state = saved_st; SWT_INC(PEER) = saved_pinc; dnode_table[PEER].ip = saved_ip;
+    DROWW(PEER).state = saved_st; SWT_INC(PEER) = saved_pinc; DROWW(PEER).ip = saved_ip;
     SWT_SUS(PEER) = 0;
     say(fails ? "[swim-life] FAIL\r\n" : "[swim-life] PASS\r\n");
     SW_SELFTEST_LEAVE();

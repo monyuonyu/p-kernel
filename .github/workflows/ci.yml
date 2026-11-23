@@ -3794,7 +3794,8 @@ jobs:
     name: "unbounded-N ([unbounded-flat/coupling/dkva-origin/disease]; U-0 origin+topic decouple; hosted-only)"
     runs-on: ubuntu-latest
     # 35 -> 60 (11-21): six run_n3_swim_cap.sh runs (plain + 5 negatives), ~6 min each
-    timeout-minutes: 60
+    # 60 -> 70 (11-24, N3 2b): a seventh run (-DN3D_NC_FLEET, C10 RED)
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -3817,9 +3818,10 @@ jobs:
           grep -aqF '[unbounded-dkva-origin]  PASS' unbounded.log
           grep -aqF '[unbounded-disease]  PASS' unbounded.log
           grep -aqF 'ALL GATES GREEN' unbounded.log
-          # coupling: the R-sized cost is CONSTANT while the fleet table grows
+          # coupling: the R-sized cost is CONSTANT while the wire widens (N3 2b:
+          # the evidence is DNODE_MAX itself, dnode_table is 0 bytes hosted)
           grep -aqF 'per-node R-cost is CONSTANT while fleet N (wire) grows' unbounded.log
-          grep -aqE 'fleet    dnode_table_bytes = .* -> .* -> .* \(GREW: wire widened\)' unbounded.log
+          grep -aqE 'fleet    DNODE_MAX = 64 -> 256 -> 1024 \(GREW: wire widened\)' unbounded.log
           # disease genuinely failed to build (not a printf)
           # the Makefile emits this exact line ONLY when the SHIPPING wave-48
           # kdds.h topic-table gate is what refused the disease build (a
@@ -3842,8 +3844,14 @@ jobs:
           ! N3S_NC=1 bash tests/unbounded/swim_coupling.sh > swim_cpl_nc.log 2>&1
           grep -aqF '[unbounded-swim] S1 FAIL' swim_cpl_nc.log
           grep -aqF 'n3s_nc_fleet' swim_cpl_nc.log
-          timeout 600 bash tests/host/run_n3_swim_cap.sh | tee n3cap.log
+          # N3 2b (D5): C10 on = every node keeps P-2..P drpc rows besides SELF
+          N3C_DNODE=1 timeout 600 bash tests/host/run_n3_swim_cap.sh | tee n3cap.log
           grep -aqF '[n3-swim-cap] ALL PASS' n3cap.log
+          grep -aqF '[n3-swim-cap] C10 PASS' n3cap.log
+          ! N3C_DNODE=1 N3C_CFLAGS=-DN3D_NC_FLEET N3C_PORT=7617 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_ncd.log 2>&1
+          cat n3cap_ncd.log
+          grep -aqF '[n3-swim-cap] C10 FAIL' n3cap_ncd.log
+          grep -aqF '[n3-swim-cap] C1 PASS' n3cap_ncd.log
           ! N3C_CFLAGS=-DN3_NC_NO_CAP N3C_PORT=7612 timeout 600 bash tests/host/run_n3_swim_cap.sh > n3cap_nc.log 2>&1
           cat n3cap_nc.log
           grep -aqF '[n3-swim-cap] C1 FAIL' n3cap_nc.log
@@ -3869,19 +3877,23 @@ jobs:
           cat n3cap_nc9.log
           grep -aqF '[n3-swim-cap] C9 FAIL' n3cap_nc9.log
           grep -aqF '[n3-swim-cap] C8 PASS' n3cap_nc9.log
-      - name: "[unbounded-dnode] N3 step 2a: dnode_table behind the drpc.h door (D2 D2c, BLOCKING; D1 waits for 2b)"
+      - name: "[unbounded-dnode] N3 step 2: dnode rows in the SWIM slots, behind the drpc.h door (D1 D2 D2c, BLOCKING)"
         # research/n3-dnode-region.md §3, §4b. D2: no code line outside drpc.c /
         # swim.c / drpc.h indexes dnode_table[. D2c: outside those, the compiler
         # refuses dnode_table in 5 shapes (#pragma GCC poison) and the door
-        # compiles. D1 (drpc.o not sized by the fleet) is RED until 2b, so the
-        # script exits non-zero today: the step checks the D2/D2c lines, not the
-        # exit code. N3D_NC=2 (one more .c that indexes it) turns D2 RED.
+        # compiles. D1 (2b): drpc.o's data+bss the same at DNODE_MAX 64/256/1024.
+        # N3D_NC=1 (one [DNODE_MAX] array forced into drpc.o) turns D1 RED,
+        # N3D_NC=2 (one more .c that indexes it) turns D2 RED.
         run: |
-          bash tests/unbounded/dnode_coupling.sh > dnode.log 2>&1 || true
+          bash tests/unbounded/dnode_coupling.sh > dnode.log 2>&1 || { cat dnode.log; exit 1; }
           cat dnode.log
+          grep -aqF '[unbounded-dnode] ALL PASS' dnode.log
+          grep -aqF '[unbounded-dnode] D1 PASS' dnode.log
           grep -aqF '[unbounded-dnode] D2 PASS' dnode.log
           grep -aqF '[unbounded-dnode] D2c PASS' dnode.log
-          if grep -aqE '\[unbounded-dnode\] D2c? FAIL' dnode.log; then echo "::error::a D2/D2c FAIL line"; exit 1; fi
+          if grep -aqE '\[unbounded-dnode\] D[12]c? FAIL' dnode.log; then echo "::error::a D1/D2/D2c FAIL line"; exit 1; fi
+          N3D_NC=1 bash tests/unbounded/dnode_coupling.sh > dnode_nc1.log 2>&1 || true
+          grep -aqF '[unbounded-dnode] D1 FAIL' dnode_nc1.log
           N3D_NC=2 bash tests/unbounded/dnode_coupling.sh > dnode_nc2.log 2>&1 || true
           grep -aqF '[unbounded-dnode] D2 FAIL' dnode_nc2.log
       - name: "[unbounded-live] multi-process relay row is a NOT-YET-WIRED follow-up (placeholder SKIPs)"
