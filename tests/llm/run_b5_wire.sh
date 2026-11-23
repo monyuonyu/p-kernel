@@ -36,6 +36,7 @@
 # merged from their int8 copies, st_q8_merge);
 #   -DB5QD_NC_DECODE  the BRG2 peers decoded to fp32 as before  -> QD3 red (q7)
 #   -DB5QD_MUT_ROWSCALE each row read with the row before's scale -> Q0 red (unit)
+#   -DB5QD_MUT_GROWSKIP a BRG1 buffer that can not grow dropped, not refused -> Q0 red (unit)
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -99,6 +100,7 @@ build nfull  -DB5R_NC_FULL_PEER      # B5 q8 2 (research/b5-recv-mem.md §3): Q5
 build ncand  -DB5M_NC_CAND           # B5 q8 3 (research/b5-merge-mem.md §3): Q7 red
 build ndec   -DB5QD_NC_DECODE        # B5 q8 4 (research/b5-merge-q8direct.md §3): QD3 red
 build mrow   -DB5QD_MUT_ROWSCALE     # B5 q8 4: the int8 rows read with the scale of the row before -> Q0 red
+build mgrow  -DB5QD_MUT_GROWSKIP     # B5 q8 4: a BRG1 buffer that can not grow is dropped, the round goes on -> Q0 red
 
 unit() {  # unit <name>: its own ARK image
     PKERNEL_PFS_BACKEND=ark PKERNEL_ARK_IMG="$WORK/ark-$1.img" PKERNEL_ARK_SECTORS=262144 \
@@ -124,6 +126,7 @@ nc nomom b5w-W15
 nc nq8 b5q-Q0
 nc nfull b5r-Q5
 nc mrow b5q-Q0
+nc mgrow b5q-Q0
 unit nomean
 echo "[b5-wire] nomean unit (not judged here): $(grep -c '^  FAIL  ' "$OUT/unit-nomean.log") FAIL lines"
 # Q7 (research/b5-merge-mem.md §3): its own entry, plain and the falsifier only

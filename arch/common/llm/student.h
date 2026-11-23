@@ -520,6 +520,7 @@ int    st_region_round(st_model *live, uint32_t gen, uint16_t self,
 int    st_rg_peers(const uint16_t *members, int count, uint16_t self, uint16_t *out);
 int    st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out);
 void   st_rg_test_fail_alloc(int nth);
+void   st_rg_test_fail_grow(void);   /* B5 q8 4: the next round's first BRG1 buffer can not grow (one-shot) */
 size_t st_rg_test_bytes(void);   /* research/b5-recv-mem.md Q5: the last round's peak bytes */
 /* B5 q8 2 (research/b5-recv-mem.md §2): a round keeps of each peer the blob
  * header and w (st_rg_w_size), all the merge reads, and fetches into one

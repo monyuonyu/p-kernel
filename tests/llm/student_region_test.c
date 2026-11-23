@@ -206,6 +206,7 @@ static int w9_fetch(void *ctx, uint16_t node, void *out, size_t cap)
 /* W10: the hook is in student.c from stage 2; weak here so the test-only
  * commit links and W10 is red by its own line */
 extern void st_rg_test_fail_alloc(int nth) __attribute__((weak));
+extern void st_rg_test_fail_grow(void) __attribute__((weak));   /* B5 q8 4 */
 
 static void w7_w10(st_model *n, tab_t *t, uint32_t G)
 {
@@ -398,6 +399,20 @@ static void q0(st_model *n, uint32_t G)
     check(rb.accepted == 3 && r3 == r4 && hash(&a) == hash(&b), "b5q-Q0",
           "the mixed round (one BRG1, two BRG2) == the same round with the two as BRG1 fakes (bytes)");
     st_free(&a); st_free(&b);
+#if !defined(B5R_NC_FULL_PEER) && !defined(B5W_NC_MEAN) && !defined(B5QD_NC_DECODE) && !defined(B5M_NC_CAND)
+    /* the BRG1 buffer starts at the q8 size; one that can not grow refuses the
+     * round as one that could not be had (b5-wire2.md §2 5), live unchanged */
+    if (!st_rg_test_fail_grow) check(0, "b5q-Q0", "st_rg_test_fail_grow is not there");
+    else {
+        clone(&a, &n[0]);
+        uint64_t h0 = hash(&a);
+        st_rg_test_fail_grow();
+        int r5 = round_on(&a, G, 0, all4, 4, tab_fetch, &tq, &ra); say("Q0 mixed, no grow", r5, &ra);
+        check(r5 == 0 && ra.same_gen == 0 && ra.accepted == 0 && ra.adopted == 0 && hash(&a) == h0, "b5q-Q0",
+              "the mixed round whose BRG1 buffer can not grow is refused whole (not merged without it), live byte-unchanged");
+        st_free(&a);
+    }
+#endif
     tab_free(&tq); tab_free(&tf);
     st_free(&f);
 }

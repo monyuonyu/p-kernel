@@ -3000,6 +3000,8 @@ int st_rg_pick(const uint16_t *peers, int m, uint32_t gen, uint16_t *out)
 
 static int st_rg_fail_nth;               /* test hook: the nth peer buffer fails */
 void st_rg_test_fail_alloc(int nth) { st_rg_fail_nth = nth; }
+static int st_rg_fail_grow;              /* test hook (B5 q8 4): a BRG1 buffer can not grow */
+void st_rg_test_fail_grow(void) { st_rg_fail_grow = 1; }
 /* test hook (research/b5-recv-mem.md §3 Q5): the most bytes the last round held
  * at once in its own buffers (peer buffers, the q8 scratch, the candidate) */
 static size_t st_rg_bytes_held, st_rg_bytes_peak;
@@ -3061,6 +3063,7 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
     st_rg_report r0 = { 0, 0, 0, 0, 0, 0.0f, 0.0f };
     if (rep) *rep = r0;
     int failn = st_rg_fail_nth; st_rg_fail_nth = 0;      /* one-shot */
+    int failg = st_rg_fail_grow; st_rg_fail_grow = 0;
     if (!live || !fetch || count < 0 || count > ST_COHORT_MAX) return ST_E_ARG;
     if (count > 0 && !members) return ST_E_ARG;
     if (!bytes || seq < 2 || n < seq) return ST_E_ARG;
@@ -3145,7 +3148,10 @@ int st_region_round(st_model *live, uint32_t gen, uint16_t self,
         if (!q8 && keepq && psz[k] < wsz) {
             /* a BRG1 peer: its header + w; a buffer that can not grow refuses
              * the round, as one that could not be had (§2 5) */
-            void *g2 = realloc(b, wsz);
+            void *g2 = failg ? NULL : realloc(b, wsz);
+#if defined(B5QD_MUT_GROWSKIP)               /* test mutant: the peer dropped, the round goes on */
+            if (!g2) { free(b); buf[k] = NULL; st_rg_drop(psz[k]); continue; }
+#endif
             if (!g2) {
                 for (int q = 0; q < npick; q++) free(buf[q]);
                 free(fb);
