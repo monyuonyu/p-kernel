@@ -539,6 +539,24 @@ static int unit(void)
           "b5w-W0", "four honest nodes: members 4 fetched 3 same-gen 4 accepted 3");
     st_free(&a); st_free(&b);
 
+    /* Q10 (audit-221): the light path's merge against the public merge. A
+     * merge started from a wrong w (audit-220's s2, cand from 0) still lowered
+     * held and was adopted, every other check green. The reference is
+     * st_round_trimmed (t 1) on a clone of live with the peers' st_save blobs */
+    {
+        clone(&a, &n[0]); clone(&b, &n[0]);
+        const void *pb[K]; size_t pl[K]; uint32_t pg[K]; void *own[K];
+        for (int k = 1; k < K; k++) { own[k] = blob(&n[k], &pl[k - 1]); pb[k - 1] = own[k]; pg[k - 1] = G; }
+        int acc = st_round_trimmed(&b, G, pb, pl, pg, K - 1, 1);
+        for (int k = 1; k < K; k++) free(own[k]);
+        int rq = round_on(&a, G, 0, all4, 4, tab_fetch, &t, &rp); say("Q10", rq, &rp);
+        printf("  Q10: reference accepted %d, light adopted %d, live hash %016llx ref %016llx\n", acc, rp.adopted,
+               (unsigned long long)hash(&a), (unsigned long long)hash(&b));
+        check(acc == 3 && rq == 1 && rp.adopted == 1, "b5m-Q10", "precondition: the reference merged 3 peers and the round adopted");
+        check(rq != 1 || hash(&a) == hash(&b), "b5m-Q10", "the adopted live == st_round_trimmed of live and the peers (w mu vu adam_t, bytes)");
+        st_free(&a); st_free(&b);
+    }
+
     /* W3: three nodes are refused, live byte-unchanged */
     clone(&a, &n[0]); uint64_t h0 = hash(&a);
     const uint16_t three[3] = { 0, 1, 2 };
