@@ -4182,6 +4182,16 @@ jobs:
           bash tests/ci/test_apt_update.sh /tmp/apt_nc2/apt_update.sh > /tmp/apt_nc2/out || true
           grep -q '^FAIL U4b' /tmp/apt_nc2/out && grep -q '^FAIL U8' /tmp/apt_nc2/out
           test "$(grep -c '^FAIL' /tmp/apt_nc2/out)" = 2
+          # negative control 3 (audit-225): apt_install.sh without the wait for the dpkg its cut
+          # left must make U9 red, and U9 only
+          mkdir -p /tmp/apt_nc3
+          cp tests/ci/apt_update.sh /tmp/apt_nc3/
+          sed '/pgrep -x dpkg/d' tests/ci/apt_install.sh > /tmp/apt_nc3/apt_install.sh
+          test "$(grep -c 'pgrep -x dpkg' /tmp/apt_nc3/apt_install.sh)" = 0
+          chmod +x /tmp/apt_nc3/*.sh
+          bash tests/ci/test_apt_update.sh /tmp/apt_nc3/apt_update.sh > /tmp/apt_nc3/out || true
+          grep -q '^FAIL U9' /tmp/apt_nc3/out
+          test "$(grep -c '^FAIL' /tmp/apt_nc3/out)" = 1
           # no bare update left in this file (the check names itself, so count)
           test "$(grep -cE '^ +sudo apt-get update$' .github/workflows/ci.yml)" = 0
           # nor in the fallback of apt_install.sh (audit-107)
