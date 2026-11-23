@@ -12,7 +12,9 @@
 #            the tie's message:
 #     grow    GL_ST_MAXCHUNK 8192u -> 16384u       (gossip_learn.h)
 #     shrink  ST_RG_FETCH_MAX (8192u * -> (4096u * (student.h)
-# Seconds, no model. Both the x86_64 and aarch64 hosted defines.
+# Seconds, no model. Both arms on both the x86_64 and aarch64 hosted defines.
+# RG_TIE_NC=1 (falsifier): the tie is cut out of each copy first -> grow and
+# shrink must then compile, so every "refused" arm goes red.
 # ---------------------------------------------------------------------------
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -51,6 +53,9 @@ arm() {  # arm <name> <expect: ok|refused> <a64|x86>
 copy() {  # copy <name>: arch/common into the work dir
     mkdir -p "$WORK/$1/arch"
     cp -r "$ROOT/arch/common" "$WORK/$1/arch/common"
+    if [ "${RG_TIE_NC:-0}" = 1 ]; then
+        mutate "$1" gossip_learn.c '/^_Static_assert((unsigned long long)ST_RG_FETCH_MAX/,/RG-FETCH tie: ST_RG/d'
+    fi
 }
 mutate() {  # mutate <name> <file under arch/common> <sed expr>
     local f="$WORK/$1/arch/common/$2"
@@ -73,5 +78,6 @@ arm grow   refused a64
 arm shrink refused a64
 arm plain  ok      x86
 arm grow   refused x86
+arm shrink refused x86   # audit-220 found the x86 shrink arm missing
 if [ $fail -eq 0 ]; then echo "[result] PASS  rg-fetch-tie"; exit 0; fi
 echo "[result] FAIL  rg-fetch-tie"; exit 1
