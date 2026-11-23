@@ -450,9 +450,13 @@ static void q5(uint32_t G)
      * count of bs (w mu vu) */
 #if defined(B5M_NC_CAND) || defined(B5R_NC_FULL_PEER) || defined(B5W_NC_MEAN)
     size_t floor_ = 3u * wsz + 4u * np * sizeof(float);
-#else
+#elif defined(B5QD_NC_DECODE)
     /* B5 q8 3 (research/b5-merge-mem.md §2 1): the candidate is a w only */
     size_t floor_ = 3u * wsz + np * sizeof(float);
+#else
+    /* B5 q8 4 (research/b5-merge-q8direct.md §2): the peers kept as their q8
+     * payload, the candidate's w, the merge's cov (n_params bytes) */
+    size_t floor_ = 3u * (st_rg_q8_cap(&mk[0]) - ST_RG_HDR) + np * sizeof(float) + np;
 #endif
     printf("  Q5: M counted %zu, the merge phase allocates at least %zu\n", got, floor_);
     check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's arrays)");
