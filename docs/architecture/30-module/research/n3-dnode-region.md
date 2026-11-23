@@ -47,6 +47,10 @@ drpc.h に口（`dnode_state/ip/missed/node_id` は読みだけ＝キャスト�
 
 crown・hosted の .text/.rodata/.data は 4 つとも全バイト同じ、D2 0・D2c PASS・NC=2 で D2 赤・master で D2c 赤を再現。毒は gcc・aarch64-gcc・mingw・clang 18 で効き、後から定義したマクロ・`##` の連結も断る。読みの口は右辺値（`&dnode_state(1)` は断られる）。**すり抜けるもの**: drpc.h より前に定義したマクロ（gcc の仕様）・asm のラベル・自前の `DRPC_TABLE_OWNER`（arch/ の下の `dnode_table[` なら D2 が拾う）。今の木には無い。CI の段の `! grep … FAIL` は効かない形だった＝監査側で `if grep …; then exit 1; fi` に。
 
+## 4e. 2b を作った（11-24、feat/n3-dnode-rows、監査待ち）
+
+hosted は表を持たない。行は `SWIM_PEER.row`（sw_map 1 本）。持ち主の 138 行を `DROW(n)`（読み、枠が無ければ毎回 0 にした UNKNOWN の行）・`DROWW(n)`（代入、SWIM の言葉と同じく枠を取る＝渡し・押し出し・断って数える）に機械的に置き換え（pk-scratch/n3b/rowify.py）、ベアでは両方 `dnode_table[(n)]`＝crown 全バイト同じ。drpc_init はある行だけ UNKNOWN に戻す。caller_strs は 8 ビットの番号の 256 で（DNODE_MAX でなく）、3 桁目も出す。自分の行も枠を 1 つ使う（peer は P−1）。決めたこと: **送る heartbeat は全 id のまま**（行の上だけに送ると誰も見つからない＝§2.2 の「送るのも行の上だけ」はやめた）。行を回すのも id の上のまま（DROW 1 回が枠を線形に探す＝CPU は O(N·R)、メモリは O(R)）＝限界。
+
 ## 5. 選ばなかった案
 
 drpc に別の NODEMAP（食い違う）。一度に 2b まで（監査で変わった所を切り分けにくい）。

@@ -326,9 +326,17 @@ static SWIM_PEER *sw_take(pk_node_t n)
  * outscores the weakest live one, else refused and counted in sw_refused);
  * refused = a sink nobody reads. A slot handed over takes its row with it:
  * the old id reads UNKNOWN to drpc from then on. */
-static DNODE dnode_rd_zero, dnode_wr_sink;
+/* The node's own row is not in a slot: it always exists, as in the table.
+ * Measured first with self in the slots (11-24, /build/n3b/cap): every node
+ * lost its own row (a self-test's UNKNOWN moment handed the slot over, the
+ * restore was refused) and read itself UNKNOWN. Keyed by the id drpc_init
+ * registered, not by drpc_my_node (self-tests change that for a while). */
+static DNODE     dnode_rd_zero, dnode_wr_sink, dnode_self_row;
+static pk_node_t dnode_self_id;
+static UB        dnode_self_set;
 DNODE *dnode_row_rd(pk_node_t n)
 {
+    if (dnode_self_set && n == dnode_self_id) return &dnode_self_row;
     SWIM_PEER *p = sw_get(n);
     if (p) return &p->row;
     dnode_rd_zero = (DNODE){ .node_id = n };
@@ -336,16 +344,27 @@ DNODE *dnode_row_rd(pk_node_t n)
 }
 DNODE *dnode_row_wr(pk_node_t n)
 {
+    if (dnode_self_set && n == dnode_self_id) return &dnode_self_row;
     SWIM_PEER *p = sw_take(n);
     if (p) return &p->row;
     dnode_wr_sink = (DNODE){ .node_id = n };
     return &dnode_wr_sink;
 }
-/* drpc_init: every row that exists back to UNKNOWN (no slot is taken) */
+/* drpc_init (after drpc_my_node is set): every row that exists back to
+ * UNKNOWN (no slot is taken); a narrow self gets its own row (UNKNOWN until
+ * drpc_init registers it) and gives back a slot it may hold. */
 void dnode_rows_reset(void)
 {
     for (INT i = 0; i < SW_STORE; i++)
         sw_peer[i].row = (DNODE){ .node_id = (pk_node_t)(sw_map.used[i] ? sw_map.id[i] : 0) };
+    dnode_self_set = 0;
+    if (PK_NODE_IN_TABLE(drpc_my_node)) {
+        INT s = nodemap_find(&sw_map, drpc_my_node);
+        if (s >= 0) nodemap_evict(&sw_map, s);
+        dnode_self_id  = drpc_my_node;
+        dnode_self_row = (DNODE){ .node_id = drpc_my_node };
+        dnode_self_set = 1;
+    }
 }
 #endif
 
