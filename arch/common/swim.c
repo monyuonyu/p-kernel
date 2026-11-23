@@ -200,19 +200,26 @@ static SWIM_PEER sw_scratch;        /* self-tests only: a refused id    */
  * 11 nodes (full slots dropped its word; master: 11/11 ALIVE again). Now its
  * slot comes back with the old incarnation, so only a NEWER word revives it
  * (and a stale ALIVE cannot: limit 1). -DN3_NC_NO_GRAVE: not kept (C9 red). */
-typedef struct { pk_node_t id; UB incarn; UB used; } SW_GRAVE;
+/* N3 2b: st = the row state it had (a DEAD id stays DEAD to drpc after its
+ * slot is handed over: a heartbeat or a stale ALIVE must not bring it back) */
+typedef struct { pk_node_t id; UB incarn; UB used; UB st; } SW_GRAVE;
 static SW_GRAVE sw_grave[SW_STORE];
 static INT      sw_grave_next;
+#if defined(DNODE_ROWS_IN_SLOTS)
+#define SW_ROW_ST(i) (sw_peer[(i)].row.state)
+#else
+#define SW_ROW_ST(i) ((UB)DNODE_UNKNOWN)   /* step 1: the row is in dnode_table, never lost */
+#endif
 
-static void sw_grave_put(pk_node_t id, UB incarn)
+static void sw_grave_put(pk_node_t id, UB incarn, UB st)
 {
 #if defined(N3_NC_NO_GRAVE)
-    (void)id; (void)incarn;
+    (void)id; (void)incarn; (void)st;
 #else
     INT g = -1;
     for (INT i = 0; i < SW_STORE && g < 0; i++) if (sw_grave[i].used && sw_grave[i].id == id) g = i;
     if (g < 0) { g = sw_grave_next; sw_grave_next = (sw_grave_next + 1) % SW_STORE; }
-    sw_grave[g].id = id; sw_grave[g].incarn = incarn; sw_grave[g].used = 1;
+    sw_grave[g].id = id; sw_grave[g].incarn = incarn; sw_grave[g].used = 1; sw_grave[g].st = st;
 #endif
 }
 
@@ -273,7 +280,7 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
             st = DNODE_ALIVE;   /* negative control of [n3-swim-cap] C8 */
 #endif
             if (st == DNODE_DEAD || st == DNODE_UNKNOWN) {   /* as wide_add */
-                sw_grave_put((pk_node_t)sw_map.id[i], sw_peer[i].incarn);
+                sw_grave_put((pk_node_t)sw_map.id[i], sw_peer[i].incarn, st);
                 nodemap_evict(&sw_map, i);
                 s = nodemap_admit(&sw_map, n);
             }
@@ -293,7 +300,7 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
                 if (lo < 0 || sc < lo_sc) { lo = i; lo_sc = sc; }
             }
             if (lo >= 0 && sw_score(n) > lo_sc) {
-                sw_grave_put((pk_node_t)sw_map.id[lo], sw_peer[lo].incarn);
+                sw_grave_put((pk_node_t)sw_map.id[lo], sw_peer[lo].incarn, SW_ROW_ST(lo));
                 nodemap_evict(&sw_map, lo);
                 s = nodemap_admit(&sw_map, n);
             }
@@ -306,7 +313,13 @@ static SWIM_PEER *sw_take_ex(pk_node_t n, BOOL may_displace)
         sw_peer[s].row.node_id = n;    /* UNKNOWN, ip 0: as drpc_init left it */
 #endif
         INT g = sw_grave_find(n);     /* back from a grave: the old incarnation */
-        if (g >= 0) { sw_peer[s].incarn = sw_grave[g].incarn; sw_grave[g].used = 0; }
+        if (g >= 0) {
+            sw_peer[s].incarn = sw_grave[g].incarn;
+#if defined(DNODE_ROWS_IN_SLOTS)
+            if (sw_grave[g].st == DNODE_DEAD) sw_peer[s].row.state = DNODE_DEAD;   /* still DEAD */
+#endif
+            sw_grave[g].used = 0;
+        }
     }
     PK_NOSW_LEAVE();
     return &sw_peer[s];
@@ -340,6 +353,8 @@ DNODE *dnode_row_rd(pk_node_t n)
     SWIM_PEER *p = sw_get(n);
     if (p) return &p->row;
     dnode_rd_zero = (DNODE){ .node_id = n };
+    INT g = sw_grave_find(n);      /* handed over while DEAD: still DEAD */
+    if (g >= 0 && sw_grave[g].st == DNODE_DEAD) dnode_rd_zero.state = DNODE_DEAD;
     return &dnode_rd_zero;
 }
 DNODE *dnode_row_wr(pk_node_t n)

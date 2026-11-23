@@ -214,7 +214,13 @@ for i in $(seq 1 $((N - 1))); do
     case "$ids" in *" $VID "*) ;; *) continue ;; esac
     c9n=$((c9n + 1))
     st=$(tail -n +"$((L2[$i] + 1))" "$LOG/node$i.log" | tr -d '\r' | grep -a "^ *$VID  " | tail -1 | awk '{print $2}')
-    [ "$st" = ALIVE ] && c9ok=$((c9ok + 1)) || c9bad="$c9bad $i(${st:-none})"
+    # (11-24, N3 2b) ... and not as a stranger: a former holder knew it DEAD, so it
+    # comes back through its newer incarnation, never "discovered" (the path that
+    # takes any ALIVE, stale or not, and a drpc heartbeat). Measured first on
+    # 6421bb31: 2b forgot DEAD when the slot was handed over and every holder
+    # "discovered" id N-1 again; -DN3_NC_NO_GRAVE does the same => C9 RED.
+    disc=$(tail -n +"$((L0[$i] + 1))" "$LOG/node$i.log" | tr -d '\r' | grep -ac "node $VID discovered")
+    if [ "$st" = ALIVE ] && [ "$disc" -eq 0 ]; then c9ok=$((c9ok + 1)); else c9bad="$c9bad $i(${st:-none},disc=$disc)"; fi
 done
 [ "$c9n" -ge 1 ] && [ "$c9ok" -eq "$c9n" ] && r C9 PASS "($c9ok/$c9n former holders have id $VID ALIVE again)" \
     || r C9 FAIL "($c9ok/$c9n former holders have id $VID ALIVE again; not:$c9bad)"
