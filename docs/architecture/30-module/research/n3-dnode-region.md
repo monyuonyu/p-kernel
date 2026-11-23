@@ -51,6 +51,10 @@ crown・hosted の .text/.rodata/.data は 4 つとも全バイト同じ、D2 0�
 
 hosted は表を持たない。行は `SWIM_PEER.row`（sw_map 1 本）。持ち主の 138 行を `DROW(n)`（読み、枠が無ければ毎回 0 にした UNKNOWN の行）・`DROWW(n)`（代入、SWIM の言葉と同じく枠を取る＝渡し・押し出し・断って数える）に機械的に置き換え（pk-scratch/n3b/rowify.py）、ベアでは両方 `dnode_table[(n)]`＝crown 全バイト同じ。drpc_init はある行だけ UNKNOWN に戻す。caller_strs は 8 ビットの番号の 256 で（DNODE_MAX でなく）、3 桁目も出す。**自分の行は枠の外に 1 つ**（最初の版は自分も枠に入れた→12 台とも枠の 8 つが全部 peer で自分の行が消えていた。自己試験の UNKNOWN の一瞬に枠が渡され、戻しが断られたと読む。drpc_init が登録した id で引く）。結果（容器 /build/n3b）: D1 1,412/1,412/1,412 B、NC1 で D1 赤、crown 2 つ全バイト同じ、自己試験 18 個の PASS 97 行が master と同じ、C1〜C10 PASS（12 台とも SELF 以外 8 行）、陰性 -DN3D_NC_FLEET は C10 だけ赤（10〜11 行、bb27c5f2 の木＝陰性の腕は自分の行の直しを通らない）。**欠陥（6421bb31）: step 1 の陰性 NO_GRAVE が緑になった**＝DEAD の持ち主の枠を渡すと行ごと消え、id が UNKNOWN に戻り、前の持ち主は全員「gossip で発見」の道（incarnation を見ない）で生き返らせた（master は表に DEAD が残る）。直し c0b8c13a: 墓に状態も（SW_GRAVE.st）、枠の無い墓の DEAD は読みで DEAD、墓から枠を取り直すと DEAD から。C9 に「殺した後に前の持ち主が 11 を discovered と言わない」を足した。代わり: 枠の無い DEAD の id も `nodes` に DEAD で出る＝行の数は最大 P＋墓（墓も SW_STORE で O(R)）。決めたこと: **送る heartbeat は全 id のまま**（行の上だけに送ると誰も見つからない＝§2.2 の「送るのも行の上だけ」はやめた）。行を回すのも id の上のまま（DROW 1 回が枠を線形に探す＝CPU は O(N·R)、メモリは O(R)）＝限界。
 
+## 4f. 監査-227（限界つき PASS、11-24）
+
+crown 2 つ・D1・NC1/NC2・CI の自己試験 37 個（PASS 161 行が master と同じ）・生きた C1〜C10・陰性 6 本・n2c-wide plain は申告どおり（容器 /build/a227）。壊し: 取り直しの墓（m3）と墓の直し全部（m4）は C9 赤。**読みの墓の 2 行（m1）は緑**＝C9 の台は再起動で新しい incarnation を最初のパケットに載せる→ C11（止めて再開、古い incarnation のまま話す）で m1 は 7/9 台が「recovered (via rx)」で赤、直しは 9/9 が新しい incarnation で戻り緑（test/n3-pause-c11）。**自分の行を枠へ戻す（m2）は C1〜C11 で見えない**（`nodes` は自分を常に SELF と出す）。限界: 枠が満杯の形でだけ、DROW の 0 の行（静的 1 個）と DROWW の指す枠はタスクをまたぐと別の id に渡りうる（出荷の 64 枠では渡しが起きない）。
+
 ## 5. 選ばなかった案
 
 drpc に別の NODEMAP（食い違う）。一度に 2b まで（監査で変わった所を切り分けにくい）。
