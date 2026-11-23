@@ -498,6 +498,9 @@ static int q7(void)
            got, st_rg_w_size(&l));
     check(rp.fetched == 7 && rp.accepted == 7, "b5m-Q7", "precondition: the L round fetched and merged its seven peers");
     check(got > 0 && got <= 700000000u, "b5m-Q7", "L, seven peers merged: the round holds <= 700 MB");
+    /* QD3 (research/b5-merge-q8direct.md §3): the BRG2 peers kept as their
+     * int8 copies (about 21 MB each), not decoded to fp32 (82 MB each) */
+    check(got > 0 && got <= 350000000u, "b5m-QD3", "L, seven BRG2 peers merged from their int8 copies: the round holds <= 350 MB");
     /* Q9 (audit-220): the light path's adoption, which the unit did not see
      * (a gate that evaluates live, an adopt that keeps live's moments: green) */
     int mz = 1;

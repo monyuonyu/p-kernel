@@ -125,9 +125,9 @@ grep -E '^  (PASS|FAIL) |^  Q7' "$OUT/q7-plain.log"
 if [ "$rc" -eq 0 ]; then echo "[b5-wire] q7 plain: PASS"; else echo "[b5-wire] q7 plain: FAIL (rc=$rc)"; fail=1; fi
 "$WORK/bin-ncand" q7 > "$OUT/q7-ncand.log" 2>&1
 red="$(grep '^  FAIL  ' "$OUT/q7-ncand.log" | sed 's/^  FAIL  \[\([^]]*\)\].*/\1/' | sort -u | tr '\n' ' ')"
-if [ "$red" = "b5m-Q7 " ] && grep -q '^  PASS  \[b5m-Q7\] precondition' "$OUT/q7-ncand.log"; then
-    echo "[b5-wire] falsifier ncand: red on b5m-Q7 only, the precondition green (as it must)"
-else echo "[b5-wire] falsifier ncand: FAIL, red on '${red}', want 'b5m-Q7' with the precondition green"; fail=1; fi
+if [ "$red" = "b5m-Q7 b5m-QD3 " ] && grep -q '^  PASS  \[b5m-Q7\] precondition' "$OUT/q7-ncand.log"; then
+    echo "[b5-wire] falsifier ncand: red on b5m-Q7 and b5m-QD3 only, the precondition green (as it must)"
+else echo "[b5-wire] falsifier ncand: FAIL, red on '${red}', want 'b5m-Q7 b5m-QD3' with the precondition green"; fail=1; fi
 if [ "${B5W_MODE:-}" = unit ]; then
     if [ "$fail" = 0 ]; then echo "[result] PASS  b5-wire unit"; exit 0; fi
     echo "[result] FAIL  b5-wire unit"; exit 1
