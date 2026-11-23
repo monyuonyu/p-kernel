@@ -206,6 +206,7 @@ static int w9_fetch(void *ctx, uint16_t node, void *out, size_t cap)
 /* W10: the hook is in student.c from stage 2; weak here so the test-only
  * commit links and W10 is red by its own line */
 extern void st_rg_test_fail_alloc(int nth) __attribute__((weak));
+extern void st_rg_test_fail_grow(void) __attribute__((weak));   /* B5 q8 4 */
 
 static void w7_w10(st_model *n, tab_t *t, uint32_t G)
 {
@@ -388,7 +389,30 @@ static void q0(st_model *n, uint32_t G)
     clone(&a, &n[0]);
     int r3 = round_on(&a, G, 0, all4, 4, tab_fetch, &tq, &ra); say("Q0 mixed", r3, &ra);
     check(ra.fetched == 3 && ra.same_gen == 4 && ra.accepted == 3, "b5q-Q0", "BRG1 and BRG2 in one round: all three counted");
-    st_free(&a);
+    /* B5 q8 4 (research/b5-merge-q8direct.md): the mixed round merges a BRG1
+     * peer (its buffer grown to header + w) with two int8 ones; the same round
+     * with all three as BRG1 (node 1 as is, nodes 2 3 their fakes) */
+    free(tf.b[1]); tf.b[1] = wrap(&n[1], G, &tf.n[1]);
+    clone(&b, &n[0]);
+    int r4 = round_on(&b, G, 0, all4, 4, tab_fetch, &tf, &rb); say("Q0 mixed as BRG1", r4, &rb);
+    printf("  Q0: mixed adopted %d / as BRG1 %d, held %.4f -> %.4f\n", r3, r4, (double)ra.held_live, (double)ra.held_cand);
+    check(rb.accepted == 3 && r3 == r4 && hash(&a) == hash(&b), "b5q-Q0",
+          "the mixed round (one BRG1, two BRG2) == the same round with the two as BRG1 fakes (bytes)");
+    st_free(&a); st_free(&b);
+#if !defined(B5R_NC_FULL_PEER) && !defined(B5W_NC_MEAN) && !defined(B5QD_NC_DECODE) && !defined(B5M_NC_CAND)
+    /* the BRG1 buffer starts at the q8 size; one that can not grow refuses the
+     * round as one that could not be had (b5-wire2.md §2 5), live unchanged */
+    if (!st_rg_test_fail_grow) check(0, "b5q-Q0", "st_rg_test_fail_grow is not there");
+    else {
+        clone(&a, &n[0]);
+        uint64_t h0 = hash(&a);
+        st_rg_test_fail_grow();
+        int r5 = round_on(&a, G, 0, all4, 4, tab_fetch, &tq, &ra); say("Q0 mixed, no grow", r5, &ra);
+        check(r5 == 0 && ra.same_gen == 0 && ra.accepted == 0 && ra.adopted == 0 && hash(&a) == h0, "b5q-Q0",
+              "the mixed round whose BRG1 buffer can not grow is refused whole (not merged without it), live byte-unchanged");
+        st_free(&a);
+    }
+#endif
     tab_free(&tq); tab_free(&tf);
     st_free(&f);
 }
@@ -450,9 +474,13 @@ static void q5(uint32_t G)
      * count of bs (w mu vu) */
 #if defined(B5M_NC_CAND) || defined(B5R_NC_FULL_PEER) || defined(B5W_NC_MEAN)
     size_t floor_ = 3u * wsz + 4u * np * sizeof(float);
-#else
+#elif defined(B5QD_NC_DECODE)
     /* B5 q8 3 (research/b5-merge-mem.md §2 1): the candidate is a w only */
     size_t floor_ = 3u * wsz + np * sizeof(float);
+#else
+    /* B5 q8 4 (research/b5-merge-q8direct.md §2): the peers kept as their q8
+     * payload, the candidate's w, the merge's cov (n_params bytes) */
+    size_t floor_ = 3u * (st_rg_q8_cap(&mk[0]) - ST_RG_HDR) + np * sizeof(float) + np;
 #endif
     printf("  Q5: M counted %zu, the merge phase allocates at least %zu\n", got, floor_);
     check(got >= floor_, "b5r-Q5", "M: the count is not below the real allocation of the merge phase (3 x (header + w) + the candidate's arrays)");
@@ -498,6 +526,9 @@ static int q7(void)
            got, st_rg_w_size(&l));
     check(rp.fetched == 7 && rp.accepted == 7, "b5m-Q7", "precondition: the L round fetched and merged its seven peers");
     check(got > 0 && got <= 700000000u, "b5m-Q7", "L, seven peers merged: the round holds <= 700 MB");
+    /* QD3 (research/b5-merge-q8direct.md §3): the BRG2 peers kept as their
+     * int8 copies (about 21 MB each), not decoded to fp32 (82 MB each) */
+    check(got > 0 && got <= 350000000u, "b5m-QD3", "L, seven BRG2 peers merged from their int8 copies: the round holds <= 350 MB");
     /* Q9 (audit-220): the light path's adoption, which the unit did not see
      * (a gate that evaluates live, an adopt that keeps live's moments: green) */
     int mz = 1;
