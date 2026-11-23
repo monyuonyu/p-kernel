@@ -487,6 +487,10 @@ static int q7(void)
     st_model l;
     if (st_init_tier(&l, 7u, ST_TIER_L) != 0) { check(0, "b5m-Q7", "precondition: the L live"); return 1; }
     const uint16_t eight[8] = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    /* Q9 (audit-220): live's moments made non-zero first (eval reads w only,
+     * so Q7 is the same round), to see that an adopted merge zeroes them */
+    for (int i = 0; i < l.n_params; i++) { l.mu[i] = 1e-3f; l.vu[i] = 1e-6f; }
+    l.adam_t = 5;
     st_rg_report rp;
     int r = round_on(&l, G, 0, eight, 8, tab_fetch, &t, &rp); say("Q7 L", r, &rp);
     size_t got = st_rg_test_bytes();
@@ -494,6 +498,14 @@ static int q7(void)
            got, st_rg_w_size(&l));
     check(rp.fetched == 7 && rp.accepted == 7, "b5m-Q7", "precondition: the L round fetched and merged its seven peers");
     check(got > 0 && got <= 700000000u, "b5m-Q7", "L, seven peers merged: the round holds <= 700 MB");
+    /* Q9 (audit-220): the light path's adoption, which the unit did not see
+     * (a gate that evaluates live, an adopt that keeps live's moments: green) */
+    int mz = 1;
+    for (int i = 0; i < l.n_params; i++) if (l.mu[i] != 0.0f || l.vu[i] != 0.0f) { mz = 0; break; }
+    printf("  Q9: adopted %d held %.4f -> %.4f, moments zero %d adam_t %d\n",
+           rp.adopted, (double)rp.held_live, (double)rp.held_cand, mz, l.adam_t);
+    check(r == 1 && rp.adopted == 1 && rp.held_cand < rp.held_live, "b5m-Q9", "L, seven peers merged: the gate evaluates the merge and adopts it (held falls)");
+    check(rp.adopted != 1 || (mz && l.adam_t == 0), "b5m-Q9", "the adopted live carries the merge's moments: mu vu 0, adam_t 0");
     st_free(&l);
     tab_free(&t);
     printf("  [b5-merge-mem] q7 %s\n", fails ? "FAIL" : "PASS");
