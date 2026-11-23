@@ -358,7 +358,7 @@ void dnode_rows_reset(void)
     for (INT i = 0; i < SW_STORE; i++)
         sw_peer[i].row = (DNODE){ .node_id = (pk_node_t)(sw_map.used[i] ? sw_map.id[i] : 0) };
     dnode_self_set = 0;
-    if (PK_NODE_IN_TABLE(drpc_my_node)) {
+    if (drpc_my_node < DNODE_MAX) {     /* PK_NODE_IN_TABLE on hosted (pk_node_row.h) */
         INT s = nodemap_find(&sw_map, drpc_my_node);
         if (s >= 0) nodemap_evict(&sw_map, s);
         dnode_self_id  = drpc_my_node;
