@@ -139,10 +139,6 @@ UW swim_wide_rtt(pk_node_t id);
 /* The wide peers SWIM holds ALIVE now (not self), up to max, into out; returns the
  * count. region_recompute reads it (N2b step (b): a wide peer within tau is a member). */
 INT swim_wide_alive(pk_node_t *out, INT max);
-#if defined(DNODE_ROWS_IN_SLOTS)
-/* `nodes ownrow`: the own row is outside the slots (audit-227 m2). 0 = pass or skip */
-INT swim_ownrow_self_test(void (*emit)(const char *));
-#endif
 /* `nodes wide`: the v2 receive path with crafted packets. 0 = all pass. */
 INT swim_wide_self_test(void (*emit)(const char *));
 /* N2 (ii)(a): TRUE if a one-node v2 frame may go to id (a narrow peer that said
@@ -268,3 +264,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *));
  * HOSTED-ONLY (SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_); the bare-metal crown stays
  * byte-identical. Emits "[selfsuspect-*]"/"[swim-selfsuspect]"; returns 0 on PASS. */
 INT swim_selfsuspect_self_test(void (*emit)(const char *));
+#if defined(DNODE_ROWS_IN_SLOTS)
+/* `nodes ownrow`: the own row is outside the slots (audit-227 m2). 0 = pass or skip */
+INT swim_ownrow_self_test(void (*emit)(const char *));
+#endif
