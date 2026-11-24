@@ -273,6 +273,7 @@ INT gl_student_fetch(pk_node_t node, void *out, UW cap)
 /* ================================================================== */
 #include "pfs_repl.h"
 #include "llm/student.h"   /* ST_RG_FETCH_MAX, ST_RG_HDR: the RG-FETCH tie below */
+#include "swim.h"          /* N3 step 3b: swim_row_ids, swim_wide_alive */
 
 /* RG-FETCH (research/b5-recv-mem.md §6): a region round fetches every copy into
  * one buffer of ST_RG_FETCH_MAX (student.h, written out as 8192 x 4096 + hdr).
@@ -808,7 +809,12 @@ static void gl_ds_init(void)
  * real. (The leave-one-class-out sim only needs GL_NCLASS distinct shards,
  * but sizing the bank to DNODE_MAX lets the [g23-ceiling] self-test drive
  * the REAL merge across >32 in-process participants with no 32-cap.) */
-#define GL_MAXNODES DNODE_MAX
+/* N3 step 3a (research/n3-gl-region.md §2 1): the in-process bank (the sims of
+ * the self-tests: gl_model[1..], sh_*) is a practice field, not the fleet. Its
+ * size is GL_SIM_MAX, fixed; the live path uses gl_model[0] only. Bare metal:
+ * DNODE_MAX is 64 too = the same arrays (crown). A plain 64, as DNODE_MAX is. */
+#define GL_SIM_MAX  64
+#define GL_MAXNODES GL_SIM_MAX
 
 static B  sh_x[GL_MAXNODES][GL_TRAIN][DTR_SEQ_LEN];
 static UB sh_y[GL_MAXNODES][GL_TRAIN];
@@ -1400,8 +1406,15 @@ static UW gl_model_ref(char *out, UW node)
     const char *p = "dtr/model/";
     UW i = 0;
     while (p[i]) { out[i] = p[i]; i++; }
+#ifdef _TK_HOSTED_LIBC_
+    /* N3 step 3: every digit (ids >= 100 took the last two: 150 named 50's) */
+    char d[5]; UW k = 0;
+    do { d[k++] = (char)('0' + node % 10); node /= 10; } while (node && k < 5);
+    while (k) out[i++] = d[--k];
+#else
     if (node >= 10) out[i++] = (char)('0' + (node / 10) % 10);
     out[i++] = (char)('0' + node % 10);
+#endif
     return i;
 }
 
@@ -1444,6 +1457,23 @@ static void gl_cmd_solo(UW steps)
     gp(" solo_ceiling="); gpf1(solo); gp("%\r\n");
 }
 
+#ifdef _TK_HOSTED_LIBC_
+/* ENS-A lineage scoping (scaling-law.md §4.2) — HOSTED-only so the bare-metal
+ * .text crown does NOT move (the preprocessor removes this whole block + the
+ * one guarded line inside gl_merge_peers below on bare metal). Default 0 =
+ * DISABLED, so ordinary live gossip is byte-for-byte its pre-ensemble self. */
+UW  gl_ens_lineage_k = 0;
+void gl_ens_set_lineage_k(UW k) { gl_ens_lineage_k = k; }
+UW   gl_ens_get_lineage_k(void) { return gl_ens_lineage_k; }
+#endif
+
+/* the bounded retries of a missing peer (gl_merge_peers, both branches below) */
+#define GL_FETCH_RETRY    6
+#define GL_FETCH_WAIT_MS  250
+
+#ifndef _TK_HOSTED_LIBC_
+/* Bare metal (crown): the id-indexed cache below, as before N3 step 3. Hosted
+ * keeps the peer copies in slots (the #else branch after gl_merge_peers). */
 /* peer-model cache (function-static; never task-stack), indexed by peer
  * node id (live ids are small: 0..GL_MAXNODES-1). Once a peer's model is
  * fetched it is REMEMBERED, so a round whose 2.5 KB pull lagged the P1
@@ -1485,8 +1515,6 @@ static void gl_prefetch_peers(pk_node_t me)
  * THIS round — but a peer once cached stays folded, so a future round only has
  * to land each still-missing peer once. Robust to transfer jitter without
  * changing any transport code. */
-#define GL_FETCH_RETRY    6
-#define GL_FETCH_WAIT_MS  250
 
 /* MEMBERSHIP + MERGE step (no transport): average my own model (gl_model[0])
  * with every peer whose model is cached (gl_phave[p]), folding the result back
@@ -1522,16 +1550,6 @@ static UW gl_fold_cached_peers(pk_node_t me)
     }
     return cnt - 1;
 }
-
-#ifdef _TK_HOSTED_LIBC_
-/* ENS-A lineage scoping (scaling-law.md §4.2) — HOSTED-only so the bare-metal
- * .text crown does NOT move (the preprocessor removes this whole block + the
- * one guarded line inside gl_merge_peers below on bare metal). Default 0 =
- * DISABLED, so ordinary live gossip is byte-for-byte its pre-ensemble self. */
-UW  gl_ens_lineage_k = 0;
-void gl_ens_set_lineage_k(UW k) { gl_ens_lineage_k = k; }
-UW   gl_ens_get_lineage_k(void) { return gl_ens_lineage_k; }
-#endif
 
 static UW gl_merge_peers(pk_node_t me)
 {
@@ -1576,6 +1594,158 @@ static UW gl_merge_peers(pk_node_t me)
     return gl_fold_cached_peers(me);
 }
 
+#else  /* _TK_HOSTED_LIBC_ */
+/* ------------------------------------------------------------------ */
+/* N3 step 3b (research/n3-gl-region.md §2 2-4): the peer copies live  */
+/* in GL_PC_SLOTS slots, each with its owner's id, not in an array of   */
+/* DNODE_MAX. A fetched model takes its owner's slot or a free one;     */
+/* when all are taken, a peer with a SWIM row pushes out an owner       */
+/* without one, else it is refused and counted ("[gl] peer cache full: */
+/* refused"). The ids fetched each round are the narrow ids with a row */
+/* (swim_row_ids) U the wide peers SWIM holds ALIVE U the slot owners  */
+/* = O(R), not every id below DNODE_MAX. The fan-in fix (a published   */
+/* peer found by its content before SWIM says ALIVE) now waits for its */
+/* row (a heartbeat or a rumour): samples/32 (G3) is its test.         */
+/* A copy once taken still stays folded (as before), and the fold goes */
+/* in owner-id order (the float sum is the same as the id-indexed one). */
+/* -DGL_NC_NO_CAP: negative control of G4 (the cap is not kept: the    */
+/* store is GL_SIM_MAX slots and nothing is refused).                  */
+/* ------------------------------------------------------------------ */
+#ifndef GL_PC_SLOTS
+#define GL_PC_SLOTS 64
+#endif
+#if defined(GL_NC_NO_CAP)
+#define GL_PC_STORE GL_SIM_MAX
+#else
+#define GL_PC_STORE GL_PC_SLOTS
+#endif
+#if GL_PC_SLOTS < 1 || GL_PC_STORE > GL_SIM_MAX
+#error "GL_PC_SLOTS must be 1..GL_SIM_MAX"
+#endif
+static float     gl_pcache[GL_PC_STORE][DTR_WEIGHT_FLOATS];
+static pk_node_t gl_powner[GL_PC_STORE];
+static UB        gl_phave[GL_PC_STORE];        /* 1 = the slot holds gl_powner's model */
+static UW        gl_prefused;                  /* models refused: the slots were full  */
+static float     gl_pfetch[DTR_WEIGHT_FLOATS]; /* a fetch lands here, then into a slot */
+#define GL_IDS_MAX (2u * DREGION_MAX + GL_PC_STORE)
+static pk_node_t gl_ids[GL_IDS_MAX];           /* this round's ids (gl_gather_ids)     */
+static UW        gl_nnarrow, gl_nrow;          /* [0,nnarrow) rows, [nnarrow,nrow) wide */
+
+static void gl_pc_reset(void)
+{
+    for (UW s = 0; s < GL_PC_STORE; s++) gl_phave[s] = 0;
+    gl_prefused = 0;
+}
+
+static INT gl_pc_find(pk_node_t p)
+{
+    for (UW s = 0; s < GL_PC_STORE; s++) if (gl_phave[s] && gl_powner[s] == p) return (INT)s;
+    return -1;
+}
+
+/* p is in this round's rows (a narrow row or a wide ALIVE peer) */
+static BOOL gl_has_row(pk_node_t p)
+{
+    for (UW i = 0; i < gl_nrow; i++) if (gl_ids[i] == p) return TRUE;
+    return FALSE;
+}
+
+/* the slot for p: its own, a free one, or (all taken) one whose owner has no
+ * row when p has one; -1 = refused (counted). The caller fills it. */
+static INT gl_pc_take(pk_node_t p)
+{
+    INT s = gl_pc_find(p);
+    if (s >= 0) return s;
+    for (UW i = 0; i < GL_PC_STORE; i++) if (!gl_phave[i]) return (INT)i;
+    if (gl_has_row(p))
+        for (UW i = 0; i < GL_PC_STORE; i++) if (!gl_has_row(gl_powner[i])) return (INT)i;
+    gl_prefused++;
+    return -1;
+}
+
+static void gl_pc_put(INT s, pk_node_t p, const float *w)
+{
+    for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_pcache[s][i] = w[i];
+    gl_powner[s] = p; gl_phave[s] = 1;
+}
+
+/* this round's ids: rows, then the wide ALIVE, then slot owners not yet in */
+static UW gl_gather_ids(void)
+{
+    UW n = 0;
+#if defined(DNODE_ROWS_IN_SLOTS)
+    n = (UW)swim_row_ids(gl_ids, (INT)DREGION_MAX);
+#else
+    pk_node_t q;   /* -DN3D_NC_FLEET (the 2a table stays): its rows */
+    DNODE_FOREACH(q) if (n < DREGION_MAX && dnode_state(q) != DNODE_UNKNOWN) gl_ids[n++] = q;
+#endif
+    gl_nnarrow = n;
+    n += (UW)swim_wide_alive(gl_ids + n, (INT)DREGION_MAX);
+    gl_nrow = n;
+    for (UW s = 0; s < GL_PC_STORE; s++)
+        if (gl_phave[s] && !gl_has_row(gl_powner[s])) gl_ids[n++] = gl_powner[s];
+    return n;
+}
+
+static void gl_prefetch_peers(pk_node_t me)
+{
+    UW n = gl_gather_ids();
+    for (UW i = 0; i < n; i++) {
+        if (gl_ids[i] == me) continue;
+        char pref[20]; UW prl = gl_model_ref(pref, gl_ids[i]);
+        (void)gl_pfs_fetch(pref, prl, gl_pfetch, DTR_WEIGHT_FLOATS);
+    }
+}
+
+/* MEMBERSHIP + MERGE step (no transport): my own model with every cached peer,
+ * in owner-id order. ptrs on the stack: GL_PC_STORE + 1 (audit-229 note 1). */
+static UW gl_fold_cached_peers(pk_node_t me)
+{
+    const float *ptrs[GL_PC_STORE + 1];
+    UB  ord[GL_PC_STORE];
+    UW  cnt = 0, k = 0;
+    for (UW s = 0; s < GL_PC_STORE; s++) {
+        if (!gl_phave[s] || gl_powner[s] == me) continue;
+        UW j = k++;                                   /* insertion by owner id */
+        while (j > 0 && gl_powner[ord[j - 1]] > gl_powner[s]) { ord[j] = ord[j - 1]; j--; }
+        ord[j] = (UB)s;
+    }
+    ptrs[cnt++] = gl_model[0];                        /* myself */
+    for (UW j = 0; j < k; j++) ptrs[cnt++] = gl_pcache[ord[j]];
+    if (cnt > 1) {
+        gl_merge(gl_avg, ptrs, cnt, DTR_WEIGHT_FLOATS);
+        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_model[0][i] = gl_avg[i];
+    }
+    return cnt - 1;
+}
+
+static UW gl_merge_peers(pk_node_t me)
+{
+    UW n = gl_gather_ids();
+    for (UW i = 0; i < n; i++) {
+        pk_node_t p = gl_ids[i];
+        if (p == me) continue;
+        if (gl_ens_lineage_k && (p % gl_ens_lineage_k) != (me % gl_ens_lineage_k))
+            continue;
+        BOOL believed = (i >= gl_nnarrow && i < gl_nrow)        /* wide ALIVE */
+                     || (p < DNODE_MAX && dnode_state(p) == DNODE_ALIVE) || gl_pc_find(p) >= 0;
+        char pref[20]; UW prl = gl_model_ref(pref, p);
+        for (INT a = 0; a < GL_FETCH_RETRY; a++) {
+            if (gl_pfs_fetch(pref, prl, gl_pfetch, DTR_WEIGHT_FLOATS) == 0) {
+                INT s = gl_pc_take(p);
+                if (s >= 0) gl_pc_put(s, p, gl_pfetch);
+                else { gp("[gl] peer cache full: refused "); gpd(gl_prefused);
+                       gp(" (node "); gpd(p); gp(")\r\n"); }
+                break;
+            }
+            if (!believed) break;
+            tk_dly_tsk(GL_FETCH_WAIT_MS);
+        }
+    }
+    return gl_fold_cached_peers(me);
+}
+#endif /* _TK_HOSTED_LIBC_ */
+
 /* §8 deliberation cadence (seconds-band). Long enough that a peer's freshly
  * published 2.5 KB model transfers (P1 want/serve) before the next merge. */
 #define GL_SLOW_BAND_MS 2000
@@ -1593,7 +1763,11 @@ static void gl_cmd_run_ex(UW rounds, UW local, INT fresh)
     gl_build_shard(slot);
     pk_node_t me = (drpc_my_node == 0xFF) ? 0 : drpc_my_node;
     UW total = rounds * local;
+#ifndef _TK_HOSTED_LIBC_
     for (UW p = 0; p < GL_MAXNODES; p++) gl_phave[p] = 0;   /* fresh cache */
+#else
+    gl_pc_reset();                                          /* fresh cache */
+#endif
 
     gp("[g22-live] node="); gpd(me);
     gp(fresh ? " START gossip-learn rounds=" : " CONT gossip-learn rounds=");
@@ -1713,6 +1887,8 @@ static UW gl_parse_uw(const UB **pp, const UB *end)
 /* ================================================================== */
 
 #define GL_G23_N  40    /* participants exercised (>32; <= DNODE_MAX)    */
+_Static_assert(GL_G23_N <= GL_SIM_MAX, "the [g23-ceiling] sims fit the practice field");
+_Static_assert(GL_ST_NODES <= GL_SIM_MAX, "the [g22] sims fit the practice field");
 
 static float gl_g23_out[DTR_WEIGHT_FLOATS];   /* merge target (static)   */
 
@@ -1758,11 +1934,25 @@ void gl_g23_test(void)
     /* save the live state we are about to perturb */
     pk_node_t saved_my = drpc_my_node;
     UB  saved_state[GL_G23_N];
+#ifndef _TK_HOSTED_LIBC_
     UB  saved_phave[GL_G23_N];
     for (UW p = 0; p < N; p++) {
         saved_state[p] = dnode_state(p);
         saved_phave[p] = gl_phave[p];
     }
+#else
+    /* N3 step 3b: the slots' owners and marks; the test empties the cache and
+     * fills it through gl_pc_take/gl_pc_put (the live door) */
+    static UB        saved_have[GL_PC_STORE];
+    static pk_node_t saved_own[GL_PC_STORE];
+    static UB        g23_wrote[GL_PC_STORE];
+    UW saved_refused = gl_prefused;
+    for (UW p = 0; p < N; p++) saved_state[p] = dnode_state(p);
+    for (UW s = 0; s < GL_PC_STORE; s++) {
+        saved_have[s] = gl_phave[s]; saved_own[s] = gl_powner[s]; g23_wrote[s] = 0;
+    }
+    gl_pc_reset();
+#endif
 
     pk_node_t me = 0;
     drpc_my_node = me;
@@ -1771,8 +1961,14 @@ void gl_g23_test(void)
     for (UW p = 1; p < N; p++) {
         dnode_set_node_id(p, (UB)p);
         dnode_set_state(p, DNODE_ALIVE);
+#ifndef _TK_HOSTED_LIBC_
         for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_pcache[p][i] = (float)p;
         gl_phave[p] = 1;
+#else
+        for (INT i = 0; i < DTR_WEIGHT_FLOATS; i++) gl_g23_out[i] = (float)p;
+        INT sl = gl_pc_take((pk_node_t)p);
+        if (sl >= 0) { gl_pc_put(sl, (pk_node_t)p, gl_g23_out); g23_wrote[sl] = 1; }
+#endif
         alive++;
     }
 
@@ -1793,10 +1989,20 @@ void gl_g23_test(void)
 
     /* restore live state */
     drpc_my_node = saved_my;
+#ifndef _TK_HOSTED_LIBC_
     for (UW p = 0; p < N; p++) {
         dnode_set_state(p, saved_state[p]);
         gl_phave[p]          = saved_phave[p];
     }
+#else
+    for (UW p = 0; p < N; p++) dnode_set_state(p, saved_state[p]);
+    /* a slot the test wrote lost its model: empty (the next round fetches it) */
+    for (UW s = 0; s < GL_PC_STORE; s++) {
+        gl_phave[s]  = g23_wrote[s] ? 0 : saved_have[s];
+        gl_powner[s] = saved_own[s];
+    }
+    gl_prefused = saved_refused;
+#endif
 
     if (fails == 0)
         gp("[g23-ceiling] PASS (>32 nodes gossip-merge for real: 40-model core merge AND 40-entry live membership fold, no 32-cap)\r\n");
