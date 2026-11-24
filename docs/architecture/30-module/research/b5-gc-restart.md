@@ -35,6 +35,7 @@
 
 - gossip_learn.c の片づけの横に `gl_gc_load`・`gl_gc_store`。ファイル `gl.gcref` は 16＋16×sizeof(GL_GC_REF) バイトの固定（印 GCRF・版 1・枠の数・枠の大きさ）。読むのは最初の `gl_gc_note` の頭で 1 回、書くのは枠が変わるたび（同じ世代の繰り返しは書かない）で、**消す前に**書く。読めた枠が壊れている（used・own が 0/1 でない、n が keep を超える）なら全部使わない
 - `pfs_dur_write`・`pfs_dur_read` は弱い参照（単体試験は pfs_durable.c なしで組む）
+- 実装者の結果（容器 /build/gcr2、監査ではない、4 腕同時）: 再起動の腕 2 本とも ALL PASS・R1 1.000（5 台とも 3,021,202 B、node 1 は「restored 5 refs」）、陰性 R1 FAIL 1.343（G1 も node 1 だけ 1.34）、素の腕 ALL PASS。根のファイルで店は全台 +1,296 B
 - 限界: 消している最中に kill されると、その世代の残りは根から外れたまま残る（窓は消す時間だけ）。根のファイルを手で消せば今の master と同じ（何も消さない側）
 
 ## 5. この後
