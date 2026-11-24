@@ -27,7 +27,7 @@
 #      node's refs dropped too much: G1 could not tell it from plain, these lines
 #      were 43 for b1, 58 for b3 (no guard), 0 for plain, NO_GC and the N2C3 runs)
 # Falsifier: whatever ① adds to turn it off (e.g. -DB5_NC_NO_GC) must turn G1
-# red; give it as B5GC_NC_CFLAGS, the plain build must be ALL PASS. Not in CI
+# red; give it as B5GC_CFLAGS, the plain build must be ALL PASS. Not in CI
 # until ① is built (it is red now, ~11 minutes).
 # B5GC_RESTART=1 (research/b5-gc-restart.md §3, added 2026-11-24 before the fix):
 # node 1 is killed (-9) half a round after head 3 and restarted on the same store

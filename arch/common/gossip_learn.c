@@ -384,6 +384,67 @@ static GL_ST_INDEX gl_gc_root;                   /* a level-1 index being walked
 static GL_ST_INDEX gl_gc_leaf;                   /* a level-0 index being walked */
 static UW          gl_gc_dropped, gl_gc_seen, gl_gc_present;
 
+/* B5 gc-restart (research/b5-gc-restart.md §2): the roots above also live in
+ * PKERNEL_PFS_DIR/gl.gcref (not 64 hex digits = never taken for a block by
+ * pfs_durable.c's is_block_name), written durably (tmp + rename + fsync) each
+ * time a ref changes and read once, before the first cleanup after a start.
+ * Without it a kill or Android's stopSelf forgot the generations this node
+ * knew, and their blocks stayed in the store for good. A file that is missing,
+ * short or of another mark, version or shape is not used (nothing restored =
+ * nothing dropped, as before). Weak: unit tests link this file without
+ * pfs_durable.c. Falsifier -DB5_NC_GC_NO_RESTORE: the file is never read. */
+extern int pfs_dur_write(const char *fname, const void *data, unsigned len) __attribute__((weak));
+extern int pfs_dur_read(const char *fname, void *buf, unsigned maxlen) __attribute__((weak));
+#define GL_GC_FILE   "gl.gcref"
+#define GL_GC_MAGIC  0x46524347u                /* "GCRF" */
+#define GL_GC_VER    1u
+typedef struct {
+    UW        magic, ver, refs, refsz;
+    GL_GC_REF ref[GL_GC_REFS];
+} GL_GC_SAVE;
+static GL_GC_SAVE gl_gc_save;
+static UB         gl_gc_loaded;
+
+static void gl_gc_load(void)
+{
+    if (gl_gc_loaded) return;
+    gl_gc_loaded = 1;
+#if !defined(B5_NC_GC_NO_RESTORE)
+    if (!pfs_dur_read) return;
+    INT n = (INT)pfs_dur_read(GL_GC_FILE, &gl_gc_save, (unsigned)sizeof gl_gc_save);
+    if (n < 0) return;                          /* no file: a first start */
+    if (n != (INT)sizeof gl_gc_save || gl_gc_save.magic != GL_GC_MAGIC
+        || gl_gc_save.ver != GL_GC_VER || gl_gc_save.refs != GL_GC_REFS
+        || gl_gc_save.refsz != (UW)sizeof(GL_GC_REF)) {
+        gp("[b5-gc] roots: gl.gcref not used (size or mark)\r\n");
+        return;
+    }
+    UW used = 0;
+    for (UW i = 0; i < GL_GC_REFS; i++) {
+        const GL_GC_REF *s = &gl_gc_save.ref[i];
+        if (s->used > 1u || s->own > 1u || s->n > (s->own ? 2u : 1u)) {
+            gp("[b5-gc] roots: gl.gcref not used (a bad ref)\r\n");
+            return;
+        }
+    }
+    for (UW i = 0; i < GL_GC_REFS; i++) {
+        gl_gc_ref[i] = gl_gc_save.ref[i];
+        if (gl_gc_ref[i].used) used++;
+    }
+    gp("[b5-gc] roots: restored "); gpd(used); gp(" refs from gl.gcref\r\n");
+#endif
+}
+
+static void gl_gc_store(void)
+{
+    if (!pfs_dur_write) return;
+    gl_gc_save.magic = GL_GC_MAGIC; gl_gc_save.ver = GL_GC_VER;
+    gl_gc_save.refs = GL_GC_REFS;   gl_gc_save.refsz = (UW)sizeof(GL_GC_REF);
+    for (UW i = 0; i < GL_GC_REFS; i++) gl_gc_save.ref[i] = gl_gc_ref[i];
+    if (pfs_dur_write(GL_GC_FILE, &gl_gc_save, (unsigned)sizeof gl_gc_save) != 0)
+        gp("[b5-gc] roots: gl.gcref not written\r\n");
+}
+
 static void gl_gc_k(const U1 id[PFS_ID_LEN], UW k[2])
 {
     k[0] = (UW)id[0] | ((UW)id[1] << 8) | ((UW)id[2] << 16) | ((UW)id[3] << 24);
@@ -454,6 +515,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
 #if defined(B5_NC_NO_GC)
     (void)node; (void)root; (void)depth; (void)nchunk; (void)own;
 #else
+    gl_gc_load();                               /* gc-restart: once, before any change */
     GL_GC_REF *r = 0;
     for (UW i = 0; i < GL_GC_REFS && !r; i++)
         if (gl_gc_ref[i].used && gl_gc_ref[i].node == node) r = &gl_gc_ref[i];
@@ -476,6 +538,9 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     r->depth[1] = r->depth[0]; r->nchunk[1] = r->nchunk[0];
     r->depth[0] = (UB)depth;   r->nchunk[0] = nchunk;
     if (r->n < keep) r->n++;
+    /* gc-restart: written before the drop. A kill during the drop leaves the
+     * rest of the victim in the store (it is no longer a root): a small window */
+    gl_gc_store();
     if (!have_vic) return;
     /* the guard: every kept generation of every ref */
     for (UW h = 0; h < GL_GC_HSIZE; h++) { gl_gc_key[h][0] = 0; gl_gc_key[h][1] = 0; }
