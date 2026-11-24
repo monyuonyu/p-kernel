@@ -19,6 +19,8 @@
  *                   the roots are read back, the kept generation stays whole
  *    [gcs-pend2]    a fetch that did not finish is dropped when the next
  *                   generation of the same peer starts to be fetched
+ *    [gcs-holds]    2b: a kept generation is held for the boot SYNC (pfs_repl.c
+ *                   does not stream it), a dropped one is not
  *    [gcs-lost]     a kept generation whose index was lost (a power loss) is
  *                   forgotten and the cleanup goes on (before: "cannot be
  *                   read; nothing dropped" for every cleanup after)
@@ -48,6 +50,7 @@ extern int  gl_gc_test_slot(node_t node);
 extern void gl_gc_test_count(const unsigned char root[32], unsigned depth, unsigned nchunk,
                              unsigned *present, unsigned *seen);
 extern void gl_gc_test_desc(unsigned char root[32], unsigned *depth, unsigned *nchunk);
+extern int  gl_gc_holds(const unsigned char id[32]);
 
 static int g_pass, g_fail;
 #define CHECK(cond, msg) do { \
@@ -170,6 +173,13 @@ int main(void)
     printf("[gcs] peer 5's index lost: peer 6's old generation %u ids here, peer 7's %u\n", h6, h7);
     CHECK(h6 == 0 && h7 == 0 && whole(&g6) && whole(&g7),
           "[gcs-lost] a kept generation that cannot be read is forgotten, the cleanup goes on");
+
+    /* 2b: the boot-SYNC responder asks gl_gc_holds (pfs_repl.c) */
+    int hk = 0, hd = 0;
+    for (unsigned c = 0; c < NCH; c++) { hk += gl_gc_holds(cur[8].cid[c]) == 1; hd += gl_gc_holds(old7.cid[c]) == 1; }
+    hk += gl_gc_holds(cur[8].root) == 1; hd += gl_gc_holds(old7.root) == 1;
+    printf("[gcs] held for the boot SYNC: a kept generation %d of %u ids, a dropped one %d\n", hk, NCH + 1u, hd);
+    CHECK(hk == (int)NCH + 1 && hd == 0, "[gcs-holds] a kept generation is held (not streamed by a boot SYNC), a dropped one is not");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

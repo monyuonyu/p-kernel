@@ -558,8 +558,10 @@ static INT gl_gc_eq(const U1 *a, const U1 *b)
  * (written), not kept as a reason to stop every cleanup for good, as it was
  * ("cannot be read; nothing dropped" until that peer came back). Falsifier
  * -DB5_NC_GC_KEEP_LOST: the old stop. */
+static UB gl_gc_guard_ok;          /* the table is the current kept set (gl_gc_holds) */
 static INT gl_gc_guard(void)
 {
+    gl_gc_guard_ok = 0;
     for (UW h = 0; h < GL_GC_HSIZE; h++) { gl_gc_key[h][0] = 0; gl_gc_key[h][1] = 0; }
     gl_gc_fill = 0;
     UB changed = 0;
@@ -588,7 +590,22 @@ static INT gl_gc_guard(void)
         }
     }
     if (changed) gl_gc_store();
+    gl_gc_guard_ok = 1;
     return 0;
+}
+
+/* gc-restart step 2b (2026-11-25): pfs_repl.c's boot-SYNC responder asks this
+ * (weak, hosted) and does not stream an id of a generation this node keeps or
+ * is fetching. Measured: a node restarted a quarter round after head 4 sent
+ * the boot SYNC and got 2-3 peers' gen 4 in part (the blocks in their RAM
+ * table, 26/43, 37/43 and 21 chunks without their index); it fetched gen 5 at
+ * its round and never gen 4, so those blocks were on no root (R1 1.114 and
+ * 1.143, with the fetch-in-progress fix in). A student chunk moves by want at
+ * a round (b5-wire2), never by a push. 1 = held (8-byte prefix: a collision
+ * keeps a block out of the stream, it can still be wanted). */
+INT gl_gc_holds(const U1 id[PFS_ID_LEN])
+{
+    return gl_gc_guard_ok && gl_gc_hash(id, 1) == 1;
 }
 
 /* the slot of st/<node>: its own, a free one, or (step 2) the one unchanged for
@@ -687,7 +704,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     /* gc-restart: written before the drop. A kill during the drop leaves the
      * rest of the victim in the store (it is no longer a root): a small window */
     gl_gc_store();
-    if (!have_vic) return;
+    if (!have_vic) { (void)gl_gc_guard(); return; }   /* the table = the kept set (gl_gc_holds) */
     /* the guard: every kept generation of every ref */
     if (gl_gc_guard() < 0) return;
     gl_gc_dropped = 0; gl_gc_seen = 0;

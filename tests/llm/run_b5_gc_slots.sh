@@ -4,13 +4,13 @@
 # the cleanup's slots are freed, a fetch cut short is dropped, a lost kept
 # generation does not stop the cleanup. Seconds, no network.
 #
-#   [gcs-full] [gcs-evict] [gcs-17th] [gcs-fresh] [gcs-pend] [gcs-pend2] [gcs-lost]
+#   [gcs-full] [gcs-evict] [gcs-17th] [gcs-fresh] [gcs-pend] [gcs-pend2] [gcs-lost] [gcs-holds]
 #   (b5_gc_slots_test.c; gossip_learn.c built with -DGL_GC_TEST, test hooks only)
 #
 # Falsifiers, each must turn exactly its checks red:
 #   -DB5_NC_GC_NO_EVICT   [gcs-evict] [gcs-17th]
 #   -DB5_NC_GC_NO_PEND    [gcs-pend] [gcs-pend2]
-#   -DB5_NC_GC_KEEP_LOST  [gcs-lost]
+#   -DB5_NC_GC_KEEP_LOST  [gcs-lost] [gcs-holds] (no guard table after the lost index)
 #
 #   bash tests/llm/run_b5_gc_slots.sh      exit 0 = PASS
 # ---------------------------------------------------------------------------
@@ -82,7 +82,9 @@ nc() { # nc <name> <flag> <the checks that must be red, space separated>
 echo ""
 nc noevict -DB5_NC_GC_NO_EVICT  "gcs-17th gcs-evict"
 nc nopend  -DB5_NC_GC_NO_PEND   "gcs-pend gcs-pend2"
-nc keeplost -DB5_NC_GC_KEEP_LOST "gcs-lost"
+# KEEP_LOST: the guard never gets built again after the lost index, so
+# gl_gc_holds (2b) has no table either = [gcs-holds] goes red with it
+nc keeplost -DB5_NC_GC_KEEP_LOST "gcs-holds gcs-lost"
 
 echo ""
 if [ "$RC" -eq 0 ] && [ "$NC_OK" = 1 ]; then echo "[result] PASS"; exit 0; fi
