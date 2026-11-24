@@ -1838,6 +1838,22 @@ INT swim_wide_alive(pk_node_t *out, INT max)
     return n;
 }
 
+#if defined(DNODE_ROWS_IN_SLOTS)
+/* N3 step 3 (research/n3-gl-region.md §2 3): the narrow ids that have a row
+ * (a slot whose row is not UNKNOWN), up to max, into out; returns the count.
+ * O(SW_STORE), not O(DNODE_MAX): gossip_learn walks these instead of every id. */
+INT swim_row_ids(pk_node_t *out, INT max)
+{
+    INT n = 0;
+    PK_NOSW_ENTER();
+    for (INT i = 0; i < SW_STORE && n < max; i++)
+        if (sw_map.used[i] && sw_peer[i].row.state != DNODE_UNKNOWN)
+            out[n++] = (pk_node_t)sw_map.id[i];
+    PK_NOSW_LEAVE();
+    return n;
+}
+#endif
+
 static pk_node_t swim_wide_self_id(void)
 {
     return swim_wide_me ? swim_wide_me : drpc_my_node;   /* 0xFF = none yet */

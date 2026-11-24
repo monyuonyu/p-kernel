@@ -139,6 +139,10 @@ UW swim_wide_rtt(pk_node_t id);
 /* The wide peers SWIM holds ALIVE now (not self), up to max, into out; returns the
  * count. region_recompute reads it (N2b step (b): a wide peer within tau is a member). */
 INT swim_wide_alive(pk_node_t *out, INT max);
+#if defined(DNODE_ROWS_IN_SLOTS)
+/* N3 step 3: the narrow ids with a row (not UNKNOWN), up to max; returns the count */
+INT swim_row_ids(pk_node_t *out, INT max);
+#endif
 /* `nodes wide`: the v2 receive path with crafted packets. 0 = all pass. */
 INT swim_wide_self_test(void (*emit)(const char *));
 /* N2 (ii)(a): TRUE if a one-node v2 frame may go to id (a narrow peer that said
