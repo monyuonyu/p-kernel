@@ -31,7 +31,7 @@
 # until ① is built (it is red now, ~11 minutes).
 # B5GC_RESTART=1 (research/b5-gc-restart.md §3, added 2026-11-24 before the fix):
 # node 1 is killed (-9) half a round after head 3 and restarted on the same store
-# and id; R1 = at the last head node 1's store <= 1.15 x the largest of nodes 2..5
+# and id; R1 = at the last head node 1's store <= 1.03 x the largest of nodes 2..5
 # (master keeps the cleanup's roots in RAM only = red). Falsifier of the fix:
 # -DB5_NC_GC_NO_RESTORE (R1 red). G0..G3 are judged as in the plain run.
 # Output: "[b5-gc] <check> PASS|FAIL ...", then ALL PASS (exit 0) or RED.
@@ -150,12 +150,16 @@ done
 echo "[b5-gc] G3 $g3"
 [ "$g3" = PASS ] || bad=1
 # R1 (B5GC_RESTART=1 only; research/b5-gc-restart.md §3, fixed 2026-11-24 before
-# the fix is built): at the last head, the restarted node 1's store <= 1.15 x the
+# the fix is built): at the last head, the restarted node 1's store <= 1.03 x the
 # largest store of nodes 2..5. master keeps the cleanup's roots in RAM only, so the
 # generations node 1 knew before the kill are never dropped (red).
+# The line was 1.15; audit-229 (2026-11-24, still before the fix) made it 1.03: one
+# left blob is about 173 KB = 1.057 of the 3.02 MB store, so 1.15 let through a fix
+# that forgets its own 2 generations (1.11). Each node keeps one blob of its own the
+# others do not, so a whole fix gives the same size (heads 1..4 are byte-equal).
 if [ "$RESTART" = 1 ]; then
     last=$(tail -n 1 "$W/heads.txt")
-    r1=$(python3 -c "import sys; v=[int(x) for x in sys.argv[1].split()[1:]]; m=max(v[1:]); print('%s %.2f %d %d' % ('PASS' if m and v[0] <= 1.15 * m else 'FAIL', v[0] / m if m else 99, v[0], m))" "$last")
+    r1=$(python3 -c "import sys; v=[int(x) for x in sys.argv[1].split()[1:]]; m=max(v[1:]); print('%s %.3f %d %d' % ('PASS' if m and v[0] <= 1.03 * m else 'FAIL', v[0] / m if m else 99, v[0], m))" "$last")
     echo "[b5-gc] R1 node 1 (restarted) / the largest of nodes 2..5 at the last head: ${r1#* }"
     echo "[b5-gc] R1 ${r1%% *}"
     [ "${r1%% *}" = PASS ] || bad=1
