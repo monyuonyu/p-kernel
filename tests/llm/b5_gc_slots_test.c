@@ -24,6 +24,9 @@
  *    [gcs-lost]     a kept generation whose index was lost (a power loss) is
  *                   forgotten and the cleanup goes on (before: "cannot be
  *                   read; nothing dropped" for every cleanup after)
+ *    [gcs-vic]      audit-232, test first (red on ad94eb1f): a kill after a
+ *                   note's gl.gcref write, before its drop, leaves the victim
+ *                   on no root; it must be dropped after the restart
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
@@ -43,6 +46,7 @@ extern int  pfs_drop(const unsigned char id[32]);
 extern int  pfs_has(const unsigned char id[32]);
 extern void pfs_id_compute(const void *buf, unsigned int len, unsigned char id[32]);
 extern void gl_gc_test_mute(int on);
+extern void gl_gc_test_cut_next(void);
 extern void gl_gc_test_note(node_t node, const unsigned char root[32], unsigned depth, unsigned nchunk);
 extern void gl_gc_test_pend(node_t node, const unsigned char root[32], unsigned depth, unsigned nchunk);
 extern void gl_gc_test_restart(void);
@@ -180,6 +184,28 @@ int main(void)
     hk += gl_gc_holds(cur[8].root) == 1; hd += gl_gc_holds(old7.root) == 1;
     printf("[gcs] held for the boot SYNC: a kept generation %d of %u ids, a dropped one %d\n", hk, NCH + 1u, hd);
     CHECK(hk == (int)NCH + 1 && hd == 0, "[gcs-holds] a kept generation is held (not streamed by a boot SYNC), a dropped one is not");
+
+    /* audit-232 (test first, red on ad94eb1f): a kill after the note's
+     * gl.gcref write and before its drop. Live: run_b5_gc.sh B5GC_PHASE=h3q,
+     * 1 arm of 4 R1 FAIL 1.057 = node 1 kept st/3's gen 2 for good (gen 3's
+     * fetch had all its chunks; gen 3 was the root after the restart). The
+     * victim must be dropped after the restart, not stay on no root. */
+    gen_t old9 = cur[9], v9 = make_gen();
+    gl_gc_test_cut_next();
+    gl_gc_test_note(9, v9.root, v9.depth, v9.nchunk);
+    unsigned hc = here(&old9);            /* the "kill" came before the drop */
+    gl_gc_test_restart();
+    gen_t g10 = make_gen();               /* any change reads the roots back */
+    gl_gc_test_note(10, g10.root, g10.depth, g10.nchunk);
+    cur[10] = g10;
+    unsigned hr = here(&old9);
+    gen_t w9 = make_gen();                /* and peer 9 moves on once more */
+    gl_gc_test_note(9, w9.root, w9.depth, w9.nchunk);
+    unsigned hn = here(&old9);
+    printf("[gcs] a kill between the write and the drop: peer 9's victim %u ids here at the kill,"
+           " %u after the restart, %u after peer 9's next generation\n", hc, hr, hn);
+    CHECK(hc == NCH + 1u && hr == 0 && hn == 0 && whole(&w9),
+          "[gcs-vic] a victim the kill left between the write and the drop is dropped after the restart");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

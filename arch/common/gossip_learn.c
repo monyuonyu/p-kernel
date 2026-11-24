@@ -670,6 +670,11 @@ static void gl_gc_pend(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
 #endif
 }
 
+#if defined(GL_GC_TEST)
+/* test only (audit-232): 1 = the next note with a victim stops right after
+ * its gl.gcref write, before the drop = a kill in that window */
+static UB gl_gc_test_cut;
+#endif
 /* st/<node> now names the generation `root`; clean the one two before it */
 static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk, UB own)
 {
@@ -704,6 +709,9 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     /* gc-restart: written before the drop. A kill during the drop leaves the
      * rest of the victim in the store (it is no longer a root): a small window */
     gl_gc_store();
+#if defined(GL_GC_TEST)
+    if (have_vic && gl_gc_test_cut) { gl_gc_test_cut = 0; return; }   /* audit-232: killed here */
+#endif
     if (!have_vic) { (void)gl_gc_guard(); return; }   /* the table = the kept set (gl_gc_holds) */
     /* the guard: every kept generation of every ref */
     if (gl_gc_guard() < 0) return;
@@ -729,6 +737,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
  * cleanup's roots by hand. mute = publish does not note (the test plays peers). */
 static UB gl_gc_test_muted;
 void gl_gc_test_mute(INT on) { gl_gc_test_muted = (UB)(on != 0); }
+void gl_gc_test_cut_next(void) { gl_gc_test_cut = 1; }
 void gl_gc_test_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_note(node, root, depth, nchunk, 0); }
 void gl_gc_test_pend(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_pend(node, root, depth, nchunk); }
 void gl_gc_test_restart(void)                   /* RAM forgotten, as after a kill */
