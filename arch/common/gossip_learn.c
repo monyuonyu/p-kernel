@@ -369,15 +369,27 @@ void gl_student_test_drop_chunk(INT idx) { gl_st_drop = idx; }
 #define GL_GC_REFS   16u
 #define GL_GC_HBITS  17u
 #define GL_GC_HSIZE  (1u << GL_GC_HBITS)
+/* gc-restart step 2 (2026-11-25, after audit-231 🔁GCR): a slot unchanged for
+ * GL_GC_STALE changes of the others is freed for a new node (its generations
+ * are dropped); before, 16 slots once taken were never freed and, with the
+ * roots now kept across restarts, the 17th peer of a store's life was never
+ * cleaned. Falsifier -DB5_NC_GC_NO_EVICT. */
+#define GL_GC_STALE  64u
 typedef struct {
     UB        used, n;              /* n = generations kept (0..2)      */
     UB        own;                  /* 1 = this node's publish: keeps 2  */
+    UB        pend;                 /* 1 = proot is being fetched        */
     pk_node_t node;
     U1        root[2][PFS_ID_LEN];  /* [0] newest, [1] the one before   */
     UB        depth[2];
     UW        nchunk[2];
+    U1        proot[PFS_ID_LEN];    /* the generation being fetched: what came of it is on no root yet */
+    UB        pdepth;
+    UW        pnchunk;
+    UW        last;                 /* gl_gc_tick at its last change */
 } GL_GC_REF;
 static GL_GC_REF   gl_gc_ref[GL_GC_REFS];
+static UW          gl_gc_tick;                   /* changes of any ref */
 static UW          gl_gc_key[GL_GC_HSIZE][2];   /* id[0..8), 0/0 = empty */
 static UW          gl_gc_fill;
 static GL_ST_INDEX gl_gc_root;                   /* a level-1 index being walked */
@@ -397,13 +409,27 @@ extern int pfs_dur_write(const char *fname, const void *data, unsigned len) __at
 extern int pfs_dur_read(const char *fname, void *buf, unsigned maxlen) __attribute__((weak));
 #define GL_GC_FILE   "gl.gcref"
 #define GL_GC_MAGIC  0x46524347u                /* "GCRF" */
-#define GL_GC_VER    1u
+#define GL_GC_VER    2u                         /* 2: pend/proot/last and the tick */
 typedef struct {
-    UW        magic, ver, refs, refsz;
+    UW        magic, ver, refs, refsz, tick;
     GL_GC_REF ref[GL_GC_REFS];
 } GL_GC_SAVE;
 static GL_GC_SAVE gl_gc_save;
 static UB         gl_gc_loaded;
+static void gl_gc_store(void);
+static INT  gl_gc_guard(void);
+static INT  gl_gc_eq(const U1 *a, const U1 *b);
+static INT  gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode);
+
+/* drop what the guard (built just before) lacks of one generation; one line */
+static void gl_gc_drop_gen(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk, const char *what)
+{
+    gl_gc_dropped = 0; gl_gc_seen = 0;
+    INT w = gl_gc_walk(root, depth, nchunk, 2);
+    gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
+    gpd(gl_gc_seen); gp(" ids of "); gp(what);
+    gp(w < 0 ? " (its index was not all here)\r\n" : "\r\n");
+}
 
 static void gl_gc_load(void)
 {
@@ -422,7 +448,8 @@ static void gl_gc_load(void)
     UW used = 0;
     for (UW i = 0; i < GL_GC_REFS; i++) {
         const GL_GC_REF *s = &gl_gc_save.ref[i];
-        if (s->used > 1u || s->own > 1u || s->n > (s->own ? 2u : 1u)) {
+        if (s->used > 1u || s->own > 1u || s->n > (s->own ? 2u : 1u) || s->pend > 1u
+            || (s->pend && s->pdepth != 1u && s->pdepth != 2u)) {
             gp("[b5-gc] roots: gl.gcref not used (a bad ref)\r\n");
             return;
         }
@@ -431,7 +458,20 @@ static void gl_gc_load(void)
         gl_gc_ref[i] = gl_gc_save.ref[i];
         if (gl_gc_ref[i].used) used++;
     }
+    gl_gc_tick = gl_gc_save.tick;
     gp("[b5-gc] roots: restored "); gpd(used); gp(" refs from gl.gcref\r\n");
+    /* a fetch the kill cut short (audit-231: a quarter round after head 4, R1
+     * 1.05..1.17): what came of that generation is on no root. Forget it first
+     * (written), then drop what no kept generation holds. */
+    for (UW i = 0; i < GL_GC_REFS; i++) {
+        GL_GC_REF *r = &gl_gc_ref[i];
+        if (!r->used || !r->pend) continue;
+        U1 p[PFS_ID_LEN]; UW pd = r->pdepth, pn = r->pnchunk;
+        for (UW b = 0; b < PFS_ID_LEN; b++) p[b] = r->proot[b];
+        r->pend = 0;
+        gl_gc_store();
+        if (gl_gc_guard() == 0) gl_gc_drop_gen(r->node, p, pd, pn, "a fetch cut short by a restart");
+    }
 #endif
 }
 
@@ -440,6 +480,7 @@ static void gl_gc_store(void)
     if (!pfs_dur_write) return;
     gl_gc_save.magic = GL_GC_MAGIC; gl_gc_save.ver = GL_GC_VER;
     gl_gc_save.refs = GL_GC_REFS;   gl_gc_save.refsz = (UW)sizeof(GL_GC_REF);
+    gl_gc_save.tick = gl_gc_tick;
     for (UW i = 0; i < GL_GC_REFS; i++) gl_gc_save.ref[i] = gl_gc_ref[i];
     if (pfs_dur_write(GL_GC_FILE, &gl_gc_save, (unsigned)sizeof gl_gc_save) != 0)
         gp("[b5-gc] roots: gl.gcref not written\r\n");
@@ -478,11 +519,12 @@ static INT gl_gc_index(const U1 id[PFS_ID_LEN], GL_ST_INDEX *ix, UW level, UW co
 }
 
 /* every id of one generation: mode 0 into the guard, 2 = drop what the guard lacks,
- * 3 = count the ids still in the store (H42: the own generation one back) */
+ * 3 = count the ids still in the store (H42: the own generation one back).
+ * -1 = an index cannot be read, -2 = the guard table is full (mode 0) */
 static INT gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
 {
     UW nleaf = (nchunk + GL_ST_IDS_PER_IDX - 1) / GL_ST_IDS_PER_IDX;
-#define GL_GC_ONE(id) do { if (mode == 0) { if (gl_gc_hash((id), 0) < 0) return -1; } \
+#define GL_GC_ONE(id) do { if (mode == 0) { if (gl_gc_hash((id), 0) < 0) return -2; } \
         else if (mode == 3) { gl_gc_seen++; if (pfs_has(id)) gl_gc_present++; } \
         else { gl_gc_seen++; if (!gl_gc_hash((id), 1) && pfs_drop(id) == PFS_OK) gl_gc_dropped++; } } while (0)
     if (depth == 1) {
@@ -509,6 +551,108 @@ static INT gl_gc_eq(const U1 *a, const U1 *b)
     return 1;
 }
 
+/* The guard: every kept generation of every ref, and (as far as its index is
+ * here) every generation being fetched. 0, or -1 = the table is full (drop
+ * nothing). gc-restart step 2: a kept generation whose index cannot be read
+ * (a power loss can take the lazy blocks under a durable root) is forgotten
+ * (written), not kept as a reason to stop every cleanup for good, as it was
+ * ("cannot be read; nothing dropped" until that peer came back). Falsifier
+ * -DB5_NC_GC_KEEP_LOST: the old stop. */
+static INT gl_gc_guard(void)
+{
+    for (UW h = 0; h < GL_GC_HSIZE; h++) { gl_gc_key[h][0] = 0; gl_gc_key[h][1] = 0; }
+    gl_gc_fill = 0;
+    UB changed = 0;
+    for (UW i = 0; i < GL_GC_REFS; i++) {
+        GL_GC_REF *r = &gl_gc_ref[i];
+        if (!r->used) continue;
+        for (UW g = 0; g < r->n; g++) {
+            INT w = gl_gc_walk(r->root[g], r->depth[g], r->nchunk[g], 0);
+            if (w == -2) { gp("[b5-gc] the guard table is full; nothing dropped\r\n"); return -1; }
+            if (w < 0) {
+#if defined(B5_NC_GC_KEEP_LOST)
+                gp("[b5-gc] st/"); gpd(r->node); gp(": a kept generation cannot be read; nothing dropped\r\n");
+                return -1;
+#else
+                gp("[b5-gc] st/"); gpd(r->node); gp(": a kept generation cannot be read; forgotten\r\n");
+                if (g == 0 && r->n == 2) {
+                    for (UW b = 0; b < PFS_ID_LEN; b++) r->root[0][b] = r->root[1][b];
+                    r->depth[0] = r->depth[1]; r->nchunk[0] = r->nchunk[1];
+                }
+                r->n--; g--; changed = 1;
+#endif
+            }
+        }
+        if (r->pend && gl_gc_walk(r->proot, r->pdepth, r->pnchunk, 0) == -2) {
+            gp("[b5-gc] the guard table is full; nothing dropped\r\n"); return -1;
+        }
+    }
+    if (changed) gl_gc_store();
+    return 0;
+}
+
+/* the slot of st/<node>: its own, a free one, or (step 2) the one unchanged for
+ * GL_GC_STALE changes (never the own one); its generations are then dropped */
+static GL_GC_REF *gl_gc_ref_of(pk_node_t node)
+{
+    for (UW i = 0; i < GL_GC_REFS; i++)
+        if (gl_gc_ref[i].used && gl_gc_ref[i].node == node) return &gl_gc_ref[i];
+    GL_GC_REF *r = 0;
+    for (UW i = 0; i < GL_GC_REFS && !r; i++) if (!gl_gc_ref[i].used) r = &gl_gc_ref[i];
+#if !defined(B5_NC_GC_NO_EVICT)
+    static GL_GC_REF old;
+    old.used = 0;
+    if (!r) {
+        GL_GC_REF *o = 0;
+        for (UW i = 0; i < GL_GC_REFS; i++)
+            if (!gl_gc_ref[i].own && (!o || gl_gc_tick - gl_gc_ref[i].last > gl_gc_tick - o->last))
+                o = &gl_gc_ref[i];
+        if (o && gl_gc_tick - o->last >= GL_GC_STALE) { old = *o; r = o; }
+    }
+#endif
+    if (!r) return 0;                           /* more refs than slots: no cleanup */
+    r->used = 1; r->node = node; r->n = 0; r->own = 0; r->pend = 0; r->last = gl_gc_tick;
+#if !defined(B5_NC_GC_NO_EVICT)
+    if (old.used) {
+        gl_gc_store();                          /* forgotten before the drop */
+        gp("[b5-gc] st/"); gpd(old.node); gp(": its slot goes to st/"); gpd(node);
+        gp(" (no change for "); gpd(gl_gc_tick - old.last); gp(" changes)\r\n");
+        if (gl_gc_guard() == 0) {
+            for (UW g = 0; g < old.n; g++)
+                gl_gc_drop_gen(old.node, old.root[g], old.depth[g], old.nchunk[g], "a freed slot");
+            if (old.pend) gl_gc_drop_gen(old.node, old.proot, old.pdepth, old.pnchunk, "a freed slot's fetch");
+        }
+        old.used = 0;
+    }
+#endif
+    return r;
+}
+
+/* gc-restart (audit-231 🔁GCR): st/<node>'s generation `root` is about to be
+ * fetched. Written before its first block is asked for; gl_gc_note clears it.
+ * Before, the blocks of a fetch a kill cut short were on no root and stayed
+ * for good (R1 1.052 and 1.171 a quarter round after head 4). A restart, or
+ * the fetch of another generation of the same node (a fetch that gave up),
+ * drops what came of it. Falsifier -DB5_NC_GC_NO_PEND. */
+static void gl_gc_pend(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk)
+{
+#if defined(B5_NC_NO_GC) || defined(B5_NC_GC_NO_PEND)
+    (void)node; (void)root; (void)depth; (void)nchunk;
+#else
+    gl_gc_load();
+    GL_GC_REF *r = gl_gc_ref_of(node);
+    if (!r) return;
+    if (r->n > 0 && gl_gc_eq(r->root[0], root)) return;   /* it is here already */
+    if (r->pend && gl_gc_eq(r->proot, root)) return;      /* the same fetch again */
+    static U1 p[PFS_ID_LEN];
+    UB had = r->pend; UW pd = r->pdepth, pn = r->pnchunk;
+    for (UW b = 0; b < PFS_ID_LEN; b++) { p[b] = r->proot[b]; r->proot[b] = root[b]; }
+    r->pend = 1; r->pdepth = (UB)depth; r->pnchunk = nchunk;
+    gl_gc_store();
+    if (had && gl_gc_guard() == 0) gl_gc_drop_gen(node, p, pd, pn, "a fetch that did not finish");
+#endif
+}
+
 /* st/<node> now names the generation `root`; clean the one two before it */
 static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk, UB own)
 {
@@ -516,18 +660,20 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     (void)node; (void)root; (void)depth; (void)nchunk; (void)own;
 #else
     gl_gc_load();                               /* gc-restart: once, before any change */
-    GL_GC_REF *r = 0;
-    for (UW i = 0; i < GL_GC_REFS && !r; i++)
-        if (gl_gc_ref[i].used && gl_gc_ref[i].node == node) r = &gl_gc_ref[i];
-    for (UW i = 0; i < GL_GC_REFS && !r; i++)
-        if (!gl_gc_ref[i].used) { r = &gl_gc_ref[i]; r->used = 1; r->node = node; r->n = 0; r->own = 0; }
+    GL_GC_REF *r = gl_gc_ref_of(node);
     if (!r) return;                             /* more refs than slots: no cleanup */
     /* research/b5-m-default.md §3 2: the own chunks two generations back (a peer
      * may still be fetching the one before), a peer's after this node's merge
      * of the next one = one generation kept */
     if (own) r->own = 1;
     UB keep = r->own ? 2 : 1;
-    if (r->n > 0 && gl_gc_eq(r->root[0], root)) return;   /* the same generation again */
+    UB unpend = r->pend && gl_gc_eq(r->proot, root);
+    if (unpend) r->pend = 0;                    /* the fetch finished */
+    if (r->n > 0 && gl_gc_eq(r->root[0], root)) {           /* the same generation again */
+        if (unpend) gl_gc_store();
+        return;
+    }
+    r->last = ++gl_gc_tick;
     U1 vic[PFS_ID_LEN]; UW vdepth = 0, vn = 0; INT have_vic = 0;
     if (r->n == keep) {
         UW o = keep - 1u;                       /* the oldest kept */
@@ -543,16 +689,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     gl_gc_store();
     if (!have_vic) return;
     /* the guard: every kept generation of every ref */
-    for (UW h = 0; h < GL_GC_HSIZE; h++) { gl_gc_key[h][0] = 0; gl_gc_key[h][1] = 0; }
-    gl_gc_fill = 0;
-    for (UW i = 0; i < GL_GC_REFS; i++) {
-        if (!gl_gc_ref[i].used) continue;
-        for (UW g = 0; g < gl_gc_ref[i].n; g++)
-            if (gl_gc_walk(gl_gc_ref[i].root[g], gl_gc_ref[i].depth[g], gl_gc_ref[i].nchunk[g], 0) < 0) {
-                gp("[b5-gc] st/"); gpd(node); gp(": a kept generation cannot be read; nothing dropped\r\n");
-                return;
-            }
-    }
+    if (gl_gc_guard() < 0) return;
     gl_gc_dropped = 0; gl_gc_seen = 0;
     INT w = gl_gc_walk(vic, vdepth, vn, 2);
     gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
@@ -569,6 +706,40 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     }
 #endif
 }
+
+#if defined(GL_GC_TEST)
+/* tests/llm/b5_gc_slots_test.c only (never in a product build): drive the
+ * cleanup's roots by hand. mute = publish does not note (the test plays peers). */
+static UB gl_gc_test_muted;
+void gl_gc_test_mute(INT on) { gl_gc_test_muted = (UB)(on != 0); }
+void gl_gc_test_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_note(node, root, depth, nchunk, 0); }
+void gl_gc_test_pend(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_pend(node, root, depth, nchunk); }
+void gl_gc_test_restart(void)                   /* RAM forgotten, as after a kill */
+{
+    for (UW i = 0; i < GL_GC_REFS; i++) gl_gc_ref[i].used = 0;
+    gl_gc_tick = 0; gl_gc_loaded = 0;
+}
+INT gl_gc_test_slot(pk_node_t node)
+{
+    for (UW i = 0; i < GL_GC_REFS; i++) if (gl_gc_ref[i].used && gl_gc_ref[i].node == node) return (INT)i;
+    return -1;
+}
+/* ids of one generation in the store: present / seen (an unreadable index stops) */
+void gl_gc_test_count(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, UW *present, UW *seen)
+{
+    gl_gc_seen = 0; gl_gc_present = 0;
+    (void)gl_gc_walk(root, depth, nchunk, 3);
+    *present = gl_gc_present; *seen = gl_gc_seen;
+}
+void gl_gc_test_desc(U1 root[PFS_ID_LEN], UW *depth, UW *nchunk)   /* the last publish */
+{
+    for (UW b = 0; b < PFS_ID_LEN; b++) root[b] = gl_st_desc.root_id[b];
+    *depth = gl_st_desc.depth; *nchunk = gl_st_desc.nchunk;
+}
+#define GL_GC_NOTE(n, r, d, c, o) do { if (!gl_gc_test_muted) gl_gc_note((n), (r), (d), (c), (o)); } while (0)
+#else
+#define GL_GC_NOTE(n, r, d, c, o) gl_gc_note((n), (r), (d), (c), (o))
+#endif
 
 /* the single named ref "st/<node>" (<= 6 chars <= PFS_NAME_MAX). */
 static UW gl_st_name(char *out, pk_node_t node)
@@ -668,7 +839,7 @@ INT gl_student_publish(pk_node_t node, const void *blob, UW len)
     char nm[8]; UW nl = gl_st_name(nm, node);
     if (pfs_dag_save((const UB *)nm, nl, &gl_st_desc, (UW)sizeof gl_st_desc) != PFS_OK)
         return -1;
-    gl_gc_note(node, root_id, depth, nchunk, 1);   /* B5 ①: the own generation two back */
+    GL_GC_NOTE(node, root_id, depth, nchunk, 1);   /* B5 ①: the own generation two back */
     return (INT)nchunk;
 }
 
@@ -716,6 +887,7 @@ static INT gl_student_fetch_in(pk_node_t node, void *out, UW cap)
     UW nleaf = (nchunk + GL_ST_IDS_PER_IDX - 1) / GL_ST_IDS_PER_IDX;
     if (nleaf > GL_ST_IDS_PER_IDX) return -1;
     if ((depth == 1) != (nchunk <= GL_ST_IDS_PER_IDX)) return -1;  /* depth/size agree */
+    gl_gc_pend(node, gl_st_desc.root_id, depth, nchunk);   /* gc-restart: before the first want */
 
     /* 2. walk the index into the ordered chunk-id list. */
     if (depth == 1) {
