@@ -118,6 +118,17 @@ wait_up() {  # <name> <count of "mind_net_task up" lines to wait for>
     local n=0
     while [ "$n" -lt 240 ] && [ "$(cnt "$LOG/$1.log" 'mind_net_task up')" -lt "$2" ]; do sleep 0.5; n=$((n + 1)); done
 }
+# wait_redrawn <name>: the node that redrew is up again = a "mind_net_task up" line after
+# a "[n2c] wide id" line after the last "[n2c] redraw" line (11-24, audit-228: the count 2
+# of wait_up never came when the redraw was before the first mind_net_task, and the wait
+# ran to its 120 s cap; the verdict read the id lines and stayed right, only time was lost)
+wait_redrawn() {
+    local n=0
+    while [ "$n" -lt 240 ] && ! tr -d '\r' < "$LOG/$1.log" \
+          | awk '/^\[n2c\] redraw/ { r = 1; w = 0; u = 0 } r && /^\[n2c\] wide id/ { w = 1 } w && /mind_net_task up/ { u = 1 } END { exit !u }'; do
+        sleep 0.5; n=$((n + 1))
+    done
+}
 
 suite() {  # <tag> <cflags>; sets SUITE_REDS
     local tag="$1" cf="$2" reds="" a b c t ra rb who other m k
@@ -174,7 +185,7 @@ suite() {  # <tag> <cflags>; sets SUITE_REDS
     [ "$ra" = 1 ] && [ "$rb" = 0 ] && { who=A; other=B; }
     [ "$ra" = 0 ] && [ "$rb" = 1 ] && { who=B; other=A; }
     m=""; k=""
-    if [ -n "$who" ]; then wait_up "$who" 2; m=$(wideline "$LOG/$who.log"); k="${m#* }"; m="${m% *}"; fi
+    if [ -n "$who" ]; then wait_redrawn "$who"; m=$(wideline "$LOG/$who.log"); k="${m#* }"; m="${m% *}"; fi
     if [ -n "$who" ] && [ "$k" = 1 ] && [ -n "$m" ] && [ "$m" != 300 ] && [ "$(wideline "$LOG/$other.log")" = "300 0" ]; then
         t=0
         while [ "$t" -lt 45 ]; do
