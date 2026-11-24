@@ -264,3 +264,7 @@ INT swim_nofleetsplit_self_test(void (*emit)(const char *));
  * HOSTED-ONLY (SWIM_SELFSUSPECT_CERT && _TK_HOSTED_LIBC_); the bare-metal crown stays
  * byte-identical. Emits "[selfsuspect-*]"/"[swim-selfsuspect]"; returns 0 on PASS. */
 INT swim_selfsuspect_self_test(void (*emit)(const char *));
+#if defined(DNODE_ROWS_IN_SLOTS)
+/* `nodes ownrow`: the own row is outside the slots (audit-227 m2). 0 = pass or skip */
+INT swim_ownrow_self_test(void (*emit)(const char *));
+#endif

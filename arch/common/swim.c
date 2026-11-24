@@ -381,6 +381,68 @@ void dnode_rows_reset(void)
         dnode_self_set = 1;
     }
 }
+
+/* `nodes ownrow` (audit-227 m2, the hole C1..C11 did not see): the node's own
+ * row is outside the slots. Pigeonhole on emptied slots: SW_STORE other narrow
+ * ids and this node all write ALIVE twice. Own row outside: every other id keeps
+ * a slot and this node reads ALIVE. Own row in a slot (m2: dnode_self_set = 0):
+ * SW_STORE + 1 writers for SW_STORE slots, so one of them is refused or pushed
+ * out = FAIL. Needs SW_STORE + 1 <= DNODE_MAX (a capped build, e.g. SWIM_PEERS=8
+ * in run_n3_swim_cap.sh); else SKIP. Every slot, grave and the own row are
+ * saved and put back; no task switch inside (the live SWIM sees nothing). */
+static SWIM_PEER sw_or_peer[SW_STORE];
+static SW_GRAVE  sw_or_grave[SW_STORE];
+static NODEMAP   sw_or_map;
+INT swim_ownrow_self_test(void (*emit)(const char *))
+{
+    void (*say)(const char *) = emit ? emit : sw_puts;
+    pk_node_t me = drpc_my_node;
+    if (me >= DNODE_MAX || SW_STORE + 1 > DNODE_MAX) {
+        say("[ownrow] SKIP (no narrow id, or the slots hold every narrow id)\r\n");
+        return 0;
+    }
+    SW_SELFTEST_ENTER();
+    PK_NOSW_ENTER();
+    sw_or_map = sw_map;
+    for (INT i = 0; i < SW_STORE; i++) { sw_or_peer[i] = sw_peer[i]; sw_or_grave[i] = sw_grave[i]; }
+    INT gnext = sw_grave_next; UW refused = sw_refused;
+    DNODE own = dnode_self_row; UB own_set = dnode_self_set;
+    UH cap = sw_map.cap;
+    nodemap_init(&sw_map, cap);
+    for (INT i = 0; i < SW_STORE; i++) sw_grave[i].used = 0;
+    INT fails = 0, kept = 0;
+    for (INT pass = 0; pass < 2; pass++) {
+        INT k = 0;
+        for (pk_node_t n = 0; n < DNODE_MAX && k < SW_STORE; n++) {
+            if (n == me) continue;
+            DROWW(n).state = DNODE_ALIVE; k++;
+        }
+        DROWW(me).state = DNODE_ALIVE;
+    }
+    {
+        INT k = 0;
+        for (pk_node_t n = 0; n < DNODE_MAX && k < SW_STORE; n++) {
+            if (n == me) continue;
+            if (sw_get(n) && DROW(n).state == DNODE_ALIVE) kept++;
+            k++;
+        }
+    }
+    UB mine = DROW(me).state;
+    if (kept != SW_STORE) fails++;
+    if (mine != DNODE_ALIVE) fails++;
+    /* put everything back */
+    sw_map = sw_or_map;
+    for (INT i = 0; i < SW_STORE; i++) { sw_peer[i] = sw_or_peer[i]; sw_grave[i] = sw_or_grave[i]; }
+    sw_grave_next = gnext; sw_refused = refused;
+    dnode_self_row = own; dnode_self_set = own_set;
+    PK_NOSW_LEAVE();
+    SW_SELFTEST_LEAVE();
+    say("[ownrow] slots "); sw_putdec((UW)SW_STORE); say(", other ids that kept a slot ");
+    sw_putdec((UW)kept); say(", own row "); say(mine == DNODE_ALIVE ? "ALIVE" : "not ALIVE"); say("\r\n");
+    say(fails ? "[ownrow] FAIL (the own row competes for a slot)\r\n"
+              : "[ownrow] PASS (the own row is outside the slots)\r\n");
+    return fails;
+}
 #endif
 
 static UB   sw_inc_get(pk_node_t n)

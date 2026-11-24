@@ -30,6 +30,8 @@
 #       (drpc keeps the 2a array) => C10 RED
 #   C11 (audit-227, only with N3C_DNODE=1) node N paused, handed over while DEAD,
 #       resumed at its old incarnation: no holder revives it by a bare packet
+#   C12 (audit-227 m2, 11-24, only with N3C_DNODE=1) `nodes ownrow` PASS on every
+#       live node: the own row is outside the slots. Mutation m2 => FAIL
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.
@@ -262,6 +264,23 @@ if [ "${N3C_DNODE:-0}" = 1 ]; then
     [ "$c11n" -ge 1 ] && [ "$c11ok" -eq "$c11n" ] && [ "$c11back" -ge 1 ] && [ "$alive11" = 1 ] \
         && r C11 PASS "($c11ok/$c11n handed-over holders: no bare-packet revival; $c11back back by incarnation)" \
         || r C11 FAIL "($c11ok/$c11n handed-over holders without a bare-packet revival, $c11back back by incarnation, node $N alive=$alive11; not:$c11bad)"
+    # C12 (audit-227 m2, added 11-24): the own row is outside the slots. `nodes
+    # ownrow` on every live node 1..N-1 (a pigeonhole on emptied slots, everything
+    # put back). Mutation m2 (dnode_self_set = 0: the own row back in the slots)
+    # => FAIL. Not in the -DN3D_NC_FLEET arm (no slots for rows there).
+    case "$CFX" in *N3D_NC_FLEET*) ;; *)
+        for i in $(seq 1 $((N - 1))); do printf '%s\n' "nodes ownrow" >&$((i + 9)); done
+        sleep 3
+        c12=0; s12=0
+        for i in $(seq 1 $((N - 1))); do
+            grep -aq '^\[ownrow\] PASS' "$LOG/node$i.log" && c12=$((c12 + 1))
+            grep -aq '^\[ownrow\] SKIP' "$LOG/node$i.log" && s12=$((s12 + 1))
+        done
+        # SKIP: the slots hold every narrow id (-DN3_NC_NO_CAP), the test cannot bite there
+        [ "$c12" -eq $((N - 1)) ] && r C12 PASS "($c12/$((N - 1)) nodes: the own row is outside the slots)" \
+            || { [ "$s12" -eq $((N - 1)) ] && r C12 SKIP "(the slots hold every id)"; } \
+            || r C12 FAIL "($c12/$((N - 1)) nodes say [ownrow] PASS, $s12 SKIP)"
+    ;; esac
 fi
 [ "$c1" -eq "$N" ] && r C1 PASS "($N/$N nodes $((P - 1))<=U<=$P, C=$P)" || r C1 FAIL "($c1/$N nodes with a [swim] slots line, C=$P and $((P - 1))<=U<=$P)"
 [ "$c2" -eq "$N" ] && r C2 PASS "($N/$N refused > 0)" || r C2 FAIL "($c2/$N nodes refused > 0)"

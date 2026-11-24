@@ -1035,6 +1035,11 @@ EXPORT INT usermain(void)
              * region_teacher() — converge/selector/determinism/staleness/
              * falsifiable. `teacher` starts "tea", distinct from "tes"t. */
             /* N2 (ii)(a): `nodes v2cap` checks capability bit 2 (reads v2). */
+            /* audit-227 m2: `nodes ownrow` (the own row is outside the SWIM slots). */
+#if defined(DNODE_ROWS_IN_SLOTS)
+            if (al >= 3 && a[0]=='o'&&a[1]=='w'&&a[2]=='n') swim_ownrow_self_test(print);
+            else
+#endif
             if (al >= 2 && a[0]=='v'&&a[1]=='2') swim_v2cap_self_test(print);
             /* N2 (ii)(b): `nodes pmv2` checks the one-node DATA frame v2 (pmesh.c). */
             else if (al >= 4 && a[0]=='p'&&a[1]=='m'&&a[2]=='v'&&a[3]=='2') pmesh_v2_self_test(print);
