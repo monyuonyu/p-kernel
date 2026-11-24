@@ -3628,6 +3628,12 @@ jobs:
       # descriptor, audit-196) must turn [h36-order] alone red. Seconds.
       - name: H36 publish syncfs before the descriptor ([h36-*], falsifier x5 red on [h36-order] only)
         run: bash tests/llm/run_h36_sync_order.sh
+      # B5 gc-restart step 2 (research/b5-gc-restart.md §4c): the cleanup's slots
+      # are freed, a fetch cut short is dropped, a lost kept generation does not
+      # stop the cleanup; three falsifier builds each red on exactly their
+      # checks. Seconds, no network (test hooks only with -DGL_GC_TEST).
+      - name: B5 gc slots ([gcs-*], falsifiers NO_EVICT / NO_PEND / KEEP_LOST red on their checks only)
+        run: bash tests/llm/run_b5_gc_slots.sh
       # B5 wire stage 1 (research/b5-wire.md): st_region_round through the real
       # pfs (W0 W3-W6), NO_GEN red on W4 only, NO_GATE red on W6 only. The
       # judgement seeds (W1 W2, NC_MEAN) are not here (about an hour).
