@@ -29,6 +29,11 @@
 # Falsifier: whatever ① adds to turn it off (e.g. -DB5_NC_NO_GC) must turn G1
 # red; give it as B5GC_NC_CFLAGS, the plain build must be ALL PASS. Not in CI
 # until ① is built (it is red now, ~11 minutes).
+# B5GC_RESTART=1 (research/b5-gc-restart.md §3, added 2026-11-24 before the fix):
+# node 1 is killed (-9) half a round after head 3 and restarted on the same store
+# and id; R1 = at the last head node 1's store <= 1.15 x the largest of nodes 2..5
+# (master keeps the cleanup's roots in RAM only = red). Falsifier of the fix:
+# -DB5_NC_GC_NO_RESTORE (R1 red). G0..G3 are judged as in the plain run.
 # Output: "[b5-gc] <check> PASS|FAIL ...", then ALL PASS (exit 0) or RED.
 # Env: B5GC_PORT (relay, default 7531), B5GC_WORK=<dir> keeps the logs,
 # B5GC_CFLAGS (EXTRA_CFLAGS of the build). Rebuilds boot/linux* and cleans it.
@@ -41,6 +46,7 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET
 PORT="${B5GC_PORT:-7531}"; P=120; NR=7
+RESTART="${B5GC_RESTART:-0}"
 PIDS=""
 cleanup() {
     for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
@@ -57,12 +63,15 @@ export PKERNEL_RELAY_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456
 "$ROOT/relay/relay" -p "$PORT" > "$W/relay.log" 2>&1 &
 PIDS="$PIDS $!"
 sleep 1
-for k in 1 2 3 4 5; do
-    rm -rf "$W/d$k" "$W/f$k"; mkfifo "$W/f$k"; mkdir -p "$W/d$k"
-    env PKERNEL_NODE_ID=$k PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$W/d$k" PKERNEL_RELAY="127.0.0.1:$PORT" \
+start_node() {  # start_node <k>: the node appends to n<k>.log (a restart keeps the store)
+    env PKERNEL_NODE_ID=$1 PKERNEL_AUTONET=1 PKERNEL_PFS_DIR="$W/d$1" PKERNEL_RELAY="127.0.0.1:$PORT" \
         PKERNEL_DEVICE_TIER=S PKERNEL_B5_ROUND_S="$P" \
-        "$BOOT/p-kernel" < "$W/f$k" > "$W/n$k.log" 2>&1 &
-    PIDS="$PIDS $!"
+        "$BOOT/p-kernel" < "$W/f$1" >> "$W/n$1.log" 2>&1 &
+    PIDS="$PIDS $!"; eval "NPID$1=$!"
+}
+for k in 1 2 3 4 5; do
+    rm -rf "$W/d$k" "$W/f$k" "$W/n$k.log"; mkfifo "$W/f$k"; mkdir -p "$W/d$k"
+    start_node $k
     eval "exec $((10 + k))<>\"$W/f$k\""
 done
 say() { printf '%s\n' "$2" >&$((10 + $1)); }
@@ -81,6 +90,19 @@ for r in $(seq 0 "$NR"); do
     echo "$line" >> "$W/heads.txt"
     echo "$own" >> "$W/own.txt"
     echo "[b5-gc] head $line (nodes with an own cleanup: $own)"
+    # B5GC_RESTART=1 (R1): node 1 dies (kill -9, a phone's process death) half a
+    # round after head 3 = after it published and merged gen 3, and comes back on
+    # the same store and id 3 s later
+    if [ "$RESTART" = 1 ] && [ "$r" -eq 2 ]; then
+        t=$(( h + P / 2 - $(date +%s) )); [ $t -gt 0 ] && sleep $t
+        eval "kill -9 \$NPID1"; sleep 3
+        n0=$(wc -l < "$W/n1.log")
+        echo "[b5-gc] node 1 killed at $(date +%s) and restarted on the same store" | tee -a "$W/n1.log"
+        start_node 1
+        n=0; until tail -n +$((n0 + 1)) "$W/n1.log" | grep -aq 'student_region_task up' || [ $n -ge 360 ]; do sleep 0.5; n=$((n + 1)); done
+        [ $n -ge 360 ] && echo "[b5-gc] node 1: no task after the restart"
+        say 1 "baby 1 0.001 32"
+    fi
 done
 for k in 1 2 3 4 5; do say $k exit; done
 sleep 2
@@ -127,5 +149,16 @@ for k in 1 2 3 4 5; do
 done
 echo "[b5-gc] G3 $g3"
 [ "$g3" = PASS ] || bad=1
+# R1 (B5GC_RESTART=1 only; research/b5-gc-restart.md §3, fixed 2026-11-24 before
+# the fix is built): at the last head, the restarted node 1's store <= 1.15 x the
+# largest store of nodes 2..5. master keeps the cleanup's roots in RAM only, so the
+# generations node 1 knew before the kill are never dropped (red).
+if [ "$RESTART" = 1 ]; then
+    last=$(tail -n 1 "$W/heads.txt")
+    r1=$(python3 -c "import sys; v=[int(x) for x in sys.argv[1].split()[1:]]; m=max(v[1:]); print('%s %.2f %d %d' % ('PASS' if m and v[0] <= 1.15 * m else 'FAIL', v[0] / m if m else 99, v[0], m))" "$last")
+    echo "[b5-gc] R1 node 1 (restarted) / the largest of nodes 2..5 at the last head: ${r1#* }"
+    echo "[b5-gc] R1 ${r1%% *}"
+    [ "${r1%% *}" = PASS ] || bad=1
+fi
 if [ "$bad" = 0 ]; then echo "[b5-gc] ALL PASS"; exit 0; fi
 echo "[b5-gc] RED"; exit 1
