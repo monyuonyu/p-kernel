@@ -38,6 +38,7 @@ ROADMAP N3 の 3 本目。この文書と試験先だけで、製品のコード
 - `[g23-ceiling]` B は枠を空にして `gl_pc_take`/`gl_pc_put` で入れ、終わったら試験が書いた枠は空に（中身は失われた＝次の周に取り直す）、他は戻す
 - 陰性: G1 は `N3G_NC=1`、G4 は `-DGL_NC_NO_CAP`（枠が GL_SIM_MAX、断らない）。G4 の台本 `tests/host/run_gl_cap.sh`
 - 注②（Path W の先着の行）はこの段では触らない。Path W を N3 で直すときに「SWIM の枠を持つ台が勝つ」に揃える
+- 実装者の結果（容器 /build/n3gl、監査ではない）: G1 1,867,012 B が 64/256/1024 で同じ（N3G_NC=1 は 64/256/1024 B 増えて赤）。G2 CI の自己試験の行＋scaling の PASS 130 種・FAIL 0 が master と同じ（[g23-ceiling] folded=39）。G3 samples/32 を直し 2 本・master 1 本同時に: 3 本とも RESULT PASS（直しの node3 は 650・683、master 750＝×10、どれも solo 567 より上）。G4 素 ALL PASS（最大 2 仲間、断り 24 行）、GL_NC_NO_CAP は G4b（最大 3）・G4c（断り 0）が赤。crown 同じ、hosted 警告 57＝master
 
 ## 5. 選ばなかった案
 
