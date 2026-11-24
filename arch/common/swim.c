@@ -389,10 +389,14 @@ void dnode_rows_reset(void)
  * SW_STORE + 1 writers for SW_STORE slots, so one of them is refused or pushed
  * out = FAIL. Needs SW_STORE + 1 <= DNODE_MAX (a capped build, e.g. SWIM_PEERS=8
  * in run_n3_swim_cap.sh); else SKIP. Every slot, grave and the own row are
- * saved and put back; no task switch inside (the live SWIM sees nothing). */
-static SWIM_PEER sw_or_peer[SW_STORE];
-static SW_GRAVE  sw_or_grave[SW_STORE];
-static NODEMAP   sw_or_map;
+ * saved and put back; no task switch inside (the live SWIM sees nothing).
+ * The save buffers are `used`: at DNODE_MAX 64 (= SW_STORE, the SKIP is a
+ * constant) the compiler dropped them, at 256/1024 it kept them, and
+ * [unbounded-swim] S1 read that as static data growing with the fleet (CI
+ * 45456833357; their size is SW_STORE's, never DNODE_MAX's). */
+static SWIM_PEER sw_or_peer[SW_STORE] __attribute__((used));
+static SW_GRAVE  sw_or_grave[SW_STORE] __attribute__((used));
+static NODEMAP   sw_or_map __attribute__((used));
 INT swim_ownrow_self_test(void (*emit)(const char *))
 {
     void (*say)(const char *) = emit ? emit : sw_puts;

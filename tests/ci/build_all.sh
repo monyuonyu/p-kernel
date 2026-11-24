@@ -133,6 +133,12 @@ step shell-links  "bash tests/ci/shell_links.sh"
 # H36's falsifier patches gossip_learn.c by text (CI 44863534347: B5 ① moved
 # the anchor, build_all was ALL OK). A few seconds, no network (test-holes H43).
 step h36-anchor   "bash tests/llm/run_h36_sync_order.sh"
+# The static-size gates of the unbounded-N job (S1 S2 and D1 D2 D2c are
+# compile-and-size only, seconds): CI 45456833357 went red on S1 (C12's save
+# buffers dropped by the compiler at DNODE_MAX 64 only) after build_all said
+# ALL OK 96 on the merged tree (audit-231 did not run it).
+step unbounded-swim  "bash tests/unbounded/swim_coupling.sh"
+step unbounded-dnode "bash tests/unbounded/dnode_coupling.sh"
 
 if [ "$fails" -eq 0 ]; then
     echo "[build] ALL OK (logs: $LOG)"
