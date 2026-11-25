@@ -59,3 +59,20 @@ class RunGate {
         return Action.STOP
     }
 }
+
+/*
+ * B5Gate — when the B5 round may run on a phone (research/b5-android-gate.md
+ * §2 3): only while charging AND on unmetered Wi-Fi. Unlike the run-gate,
+ * an unknown network state CLOSES it (a round costs data; the run-gate
+ * fails open so a node is not paused by a transient). PKernelService sends
+ * the answer to the kernel (PKernel.nativeSetB5Allowed) on every tick.
+ */
+object B5Gate {
+    enum class Net { UNMETERED_WIFI, METERED, NONE, UNKNOWN }
+
+    fun allowed(charging: Boolean, net: Net): Boolean {
+        if (!charging) return false              // NC-B5-CHARGING
+        if (net == Net.UNKNOWN) return false     // NC-B5-UNKNOWN-CLOSED
+        return net == Net.UNMETERED_WIFI
+    }
+}

@@ -270,6 +270,28 @@ class PKernelService : Service() {
             pk.boot(nodeId)
         }
         startLogPoller(pk)
+        sendB5Gate()   // nativeBoot closed the B5 round gate; open it now if allowed
+    }
+
+    /* --- B5 round gate (research/b5-android-gate.md) ----------------------
+     * The B5 round (21600 s, set in nativeBoot) runs only while charging on
+     * unmetered Wi-Fi. Unlike the run-gate, an unreadable state CLOSES it
+     * (B5Gate in RunGate.kt, unit-tested). Sent after every boot and on every
+     * battery/network tick (reconcileGate). */
+    private fun b5Net(): B5Gate.Net {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return B5Gate.Net.UNKNOWN
+        val net = cm.activeNetwork ?: return B5Gate.Net.NONE
+        val caps = cm.getNetworkCapabilities(net) ?: return B5Gate.Net.UNKNOWN
+        return if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                   caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+            B5Gate.Net.UNMETERED_WIFI else B5Gate.Net.METERED
+    }
+
+    private fun sendB5Gate() {
+        if (!running.get()) return
+        val on = B5Gate.allowed(isPlugged(), b5Net())
+        try { PKernel().nativeSetB5Allowed(on) } catch (e: Throwable) { /* no lib yet: next tick */ }
     }
 
     /* --- N-1b MulticastLock -------------------------------------------------
@@ -419,6 +441,7 @@ class PKernelService : Service() {
             // just re-pause.
             stopSelf()
         }
+        sendB5Gate()
     }
 
     /**
