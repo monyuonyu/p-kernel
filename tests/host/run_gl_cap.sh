@@ -11,7 +11,20 @@
 #       refused, not silently dropped)
 # Falsifier: GLCAP_CFLAGS="-DGL_PC_SLOTS=2 -DGL_NC_NO_CAP" (the cap not kept)
 # => G4b and G4c red. Rebuilds boot/linux* and cleans it. Not in CI.
-# Env: GLCAP_CFLAGS (default -DGL_PC_SLOTS=2), GLCAP_PORT, GLCAP_WORK (kept).
+#
+# GLCAP_ARM=push (the push-out rule live, the N3G limit of audit-231): built
+# with -DGL_PC_SLOTS=2 -DSWIM_PEERS=2, so each node has SWIM rows for 2 of its
+# 3 peers and its 2 slots hold those two. Node 4 is killed after round 4 of
+# node 1. Nodes 1 and 3 hold node 4 (sw_score: their best two are {4,2});
+# once 4 is DEAD, the third peer's word takes 4's SWIM row (a DEAD holder is
+# handed over), so 4 has no row and the third peer has one:
+#   G4a nodes 1..3 finish
+#   G4d at least one "[gl] peer cache: node P pushes out node 4" line, and no
+#       push-out line names a node other than 4 (only 4 lost its row)
+# Falsifier: GLCAP_CFLAGS="-DGL_PC_SLOTS=2 -DSWIM_PEERS=2 -DGL_NC_NO_PUSH"
+# (the rule removed) => G4d red.
+# Env: GLCAP_ARM (cap|push), GLCAP_CFLAGS (default -DGL_PC_SLOTS=2, push:
+# -DGL_PC_SLOTS=2 -DSWIM_PEERS=2), GLCAP_PORT, GLCAP_WORK (kept).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -21,8 +34,14 @@ case "$(uname -m)" in
 esac
 unset PKERNEL_RELAY PKERNEL_RELAY_HOST PKERNEL_RELAY_PORT PKERNEL_LAN PKERNEL_AUTONET
 PORT="${GLCAP_PORT:-7451}"
-CFL="${GLCAP_CFLAGS:--DGL_PC_SLOTS=2}"
-ROUNDS=8; LOCAL=4
+ARM="${GLCAP_ARM:-cap}"
+if [ "$ARM" = push ]; then
+    CFL="${GLCAP_CFLAGS:--DGL_PC_SLOTS=2 -DSWIM_PEERS=2}"
+    ROUNDS=24; LOCAL=4
+else
+    CFL="${GLCAP_CFLAGS:--DGL_PC_SLOTS=2}"
+    ROUNDS=8; LOCAL=4
+fi
 PIDS=""
 cleanup() {
     for p in $PIDS; do kill -9 "$p" 2>/dev/null; done
@@ -54,6 +73,24 @@ wf() { local n=0; while [ $n -lt $(( $3 * 2 )) ]; do grep -aqE "$2" "$1" 2>/dev/
 for k in 1 2 3 4; do wf "$W/n$k.log" -- '-> FULL' 90 || echo "[gl-cap] node $k: never FULL"; done
 sleep 3
 for k in 1 2 3 4; do say $k "dtr gossip run $ROUNDS $LOCAL"; done
+if [ "$ARM" = push ]; then
+    bad=0
+    wf "$W/n1.log" 'g22-live\] node=1 round=4 ' 300 || echo "[gl-cap] node 1: never round 4"
+    set -- $PIDS; kill -9 "$5"          # relay, n1, n2, n3, n4
+    echo "[gl-cap] killed node 4 (pid $5) at $(date +%T)"
+    done_n=0
+    for k in 1 2 3; do wf "$W/n$k.log" 'RESULT rounds=' 600 && done_n=$((done_n + 1)); done
+    if [ "$done_n" = 3 ]; then echo "[gl-cap] G4a PASS (3 of 3 finished)"; else echo "[gl-cap] G4a FAIL ($done_n of 3 finished)"; bad=1; fi
+    for k in 1 2 3; do
+        echo "[gl-cap] node $k: $(tr -d '\r' < "$W/n$k.log" | grep -a 'peer cache' | head -3 | tr '\n' '|')"
+    done
+    p4=$(cat "$W"/n?.log | tr -d '\r' | grep -ac 'pushes out node 4 ')
+    pother=$(cat "$W"/n?.log | tr -d '\r' | grep -a 'pushes out node ' | grep -avc 'pushes out node 4 ')
+    if [ "$p4" -ge 1 ] && [ "$pother" = 0 ]; then echo "[gl-cap] G4d PASS ($p4 push-outs of node 4, 0 of others)"
+    else echo "[gl-cap] G4d FAIL (push-outs of node 4: $p4, of others: $pother)"; bad=1; fi
+    if [ "$bad" = 0 ]; then echo "[gl-cap] ALL PASS"; exit 0; fi
+    echo "[gl-cap] RED"; exit 1
+fi
 bad=0; done_n=0
 for k in 1 2 3 4; do wf "$W/n$k.log" 'RESULT rounds=' 400 && done_n=$((done_n + 1)); done
 if [ "$done_n" = 4 ]; then echo "[gl-cap] G4a PASS (4 of 4 finished)"; else echo "[gl-cap] G4a FAIL ($done_n of 4 finished)"; bad=1; fi
