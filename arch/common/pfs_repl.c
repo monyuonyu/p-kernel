@@ -249,6 +249,11 @@ static U1            announce_suppress = 0;
 /* G28: gate for the boot-SYNC responder — non-zero return keeps a block out
  * of the stream (a quietly-held protected unit must not leak via ambient sync). */
 static PFSR_SYNC_FILTER sync_filter = 0;
+#if defined(_TK_HOSTED_LIBC_)
+/* gossip_learn.c (hosted): 1 = an id of a student generation this node keeps
+ * (B5 gc-restart 2b); weak = absent from a link, no id is held */
+extern INT gl_gc_holds(const U1 id[PFS_ID_LEN]) __attribute__((weak));
+#endif
 
 void pfs_repl_set_announce_hook(PFSR_ANN_HOOK fn) { announce_hook = fn; }
 void pfs_repl_set_announce_suppress(INT on) { announce_suppress = on ? 1 : 0; }
@@ -1042,6 +1047,13 @@ static void pfsr_sync_take(const PFSR_SYNC_PKT *s, W r)
             /* a quietly-held protected unit is NOT streamed by ambient
              * sync — only the protect actuator spreads it (§2/G28) */
             if (sync_filter && sync_filter(sid)) continue;
+#if defined(_TK_HOSTED_LIBC_) && !defined(B5_NC_SYNC_STUDENT)
+            /* B5 gc-restart 2b (research/b5-gc-restart.md §4c): a student
+             * chunk or index this node keeps moves by want at a round, not
+             * by a boot SYNC; streamed, the rejoining node kept the peers'
+             * generation it would never fetch on no root of its cleanup */
+            if (gl_gc_holds && gl_gc_holds(sid)) continue;
+#endif
             send_block_to(src, sid);
         }
     }
