@@ -6788,7 +6788,9 @@ void student_region_task(INT stacd, void *exinf)
     tk_dly_tsk(8000);                                /* let SWIM form a region */
     r_puts("[baby] student_region_task up, round "); r_putdec(P); r_puts(" s\r\n");
     long pub = -1, mer = -1, seen_at = 0;
+#ifndef B5_NC_NO_GATE
     int gate_said = 1;                               /* open says nothing (a PC: as before) */
+#endif
     for (;;) {
         tk_dly_tsk(1000);
         if (mind_paused_for_hibernation()) continue;
