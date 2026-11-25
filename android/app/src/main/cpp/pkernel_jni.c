@@ -36,6 +36,7 @@ int *__errno_location(void) { return (int *)__errno(); }
 /* From boot/linux/main.c (renamed via -Dmain=pkernel_main for the
  * Android build so JNI's _start isn't shadowed). */
 extern int pkernel_main(int argc, char **argv);
+extern void pk_b5_gate_set(int on);   /* r3_incontext.c: the B5 round gate */
 
 static int stdout_pipe[2] = { -1, -1 };
 static int stdin_pipe[2]  = { -1, -1 };
@@ -110,6 +111,12 @@ Java_io_pkernel_PKernel_nativeBoot(JNIEnv *env, jobject self, jint node_id)
      * else in the JNI sets it, so this is the sole, explicit tier decision.
      * Must precede the kernel thread (dev_capacity_probe runs during boot). */
     setenv("PKERNEL_DEVICE_TIER", "M", 1);
+
+    /* B5 rounds (research/b5-android-gate.md §2 2): a long round, and the
+     * gate closed at boot. PKernelService opens it (nativeSetB5Allowed) only
+     * while charging on unmetered Wi-Fi. Both before the kernel thread. */
+    setenv("PKERNEL_B5_ROUND_S", "21600", 1);
+    pk_b5_gate_set(0);
 
     /* Capture stdout/stderr / inject stdin via pipes. */
     if (stdout_pipe[0] < 0) pipe(stdout_pipe);
@@ -190,6 +197,19 @@ Java_io_pkernel_PKernel_nativeConfigureRelay(JNIEnv *env, jobject self,
  *    port  — UDP port net_lan binds + broadcasts on (default 7351). Ignored
  *            if <= 0 (net_lan then uses its built-in default).
  */
+/*
+ *  nativeSetB5Allowed — open (true) or close (false) the B5 round gate
+ *  (research/b5-android-gate.md). PKernelService sends it on every power and
+ *  network tick: open only while charging on unmetered Wi-Fi. Safe before
+ *  and after nativeBoot (one word the round task reads each second).
+ */
+JNIEXPORT void JNICALL
+Java_io_pkernel_PKernel_nativeSetB5Allowed(JNIEnv *env, jobject self, jboolean on)
+{
+    (void)env; (void)self;
+    pk_b5_gate_set(on ? 1 : 0);
+}
+
 JNIEXPORT void JNICALL
 Java_io_pkernel_PKernel_nativeConfigureLan(JNIEnv *env, jobject self,
                                            jboolean on, jint port)

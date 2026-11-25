@@ -26,6 +26,7 @@ public final class PKernel {
     public native void   nativeSetDataDir(String dir);
     public native void   nativeConfigureRelay(String host, int port, String keyHex);
     public native void   nativeConfigureLan(boolean on, int port);
+    public native void   nativeSetB5Allowed(boolean on);
     public native int    nativeReadStdout(byte[] dst, int maxlen);
     public native int    nativeWriteStdin(byte[] src, int len);
 

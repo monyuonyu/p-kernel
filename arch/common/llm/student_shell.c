@@ -1699,6 +1699,10 @@ extern unsigned long pfs_dur_syncfs_count(void) __attribute__((weak));
 static unsigned long region_lazy(void) { return pfs_dur_lazy_fsync_count ? pfs_dur_lazy_fsync_count() : 0; }
 static unsigned long region_syncfs(void) { return pfs_dur_syncfs_count ? pfs_dur_syncfs_count() : 0; }
 
+/* the round gate lives in r3_incontext.c (weak: unit tests link this file alone) */
+extern void pk_b5_gate_set(int on) __attribute__((weak));
+extern int  pk_b5_gate_get(void) __attribute__((weak));
+
 static int student_region_cmd(const char *q, emit_fn emit)
 {
     while (*q == ' ' || *q == '\t') q++;
@@ -1846,6 +1850,18 @@ int student_shell_cmd(const char *args, emit_fn emit)
     if (p[0]=='r' && p[1]=='e' && p[2]=='g' && p[3]=='i' && p[4]=='o' && p[5]=='n' &&
         (p[6]==0 || p[6]==' ' || p[6]=='\t'))
         return student_region_cmd(p + 6, emit);
+
+    /* `baby gate [0|1]` (research/b5-android-gate.md A1): the round gate of
+     * student_region_task (r3_incontext.c). Android drives it from the JNI. */
+    if (p[0]=='g' && p[1]=='a' && p[2]=='t' && p[3]=='e' &&
+        (p[4]==0 || p[4]==' ' || p[4]=='\t')) {
+        const char *q = p + 4;
+        while (*q == ' ' || *q == '\t') q++;
+        if (!pk_b5_gate_set || !pk_b5_gate_get) { emit("[baby] gate: not in this build\r\n"); return -1; }
+        if (*q == '0' || *q == '1') pk_b5_gate_set(*q == '1');
+        emit(pk_b5_gate_get() ? "[baby] gate: open\r\n" : "[baby] gate: closed\r\n");
+        return 0;
+    }
 
     /* ---- SS-3 (special-structure-mind.md §3.2/§8.4): same-tier merge cohort.
      * `student merge` / `baby merge` drives the REAL student-only weight merge

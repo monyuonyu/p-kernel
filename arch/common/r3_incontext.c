@@ -6760,6 +6760,15 @@ extern void student_region_see(UW gen) __attribute__((weak));   /* B5 D6b: latch
 #define SR_SEE_S 5
 #define SR_ROUND_MIN 60u
 
+/* The round gate (research/b5-android-gate.md §2 1): 1 = the rounds may run
+ * (the default: a PC behaves as before), 0 = the task does nothing (no see,
+ * publish or merge) until it opens. Android closes it at boot (pkernel_jni.c)
+ * and opens it only while charging on unmetered Wi-Fi (PKernelService.kt).
+ * One word, read each second. -DB5_NC_NO_GATE: the task never reads it (A1). */
+static volatile int pk_b5_allow = 1;
+void pk_b5_gate_set(int on) { pk_b5_allow = on ? 1 : 0; }
+int  pk_b5_gate_get(void)   { return pk_b5_allow; }
+
 static UW sr_period(void)
 {
     const char *e = getenv("PKERNEL_B5_ROUND_S");
@@ -6779,9 +6788,20 @@ void student_region_task(INT stacd, void *exinf)
     tk_dly_tsk(8000);                                /* let SWIM form a region */
     r_puts("[baby] student_region_task up, round "); r_putdec(P); r_puts(" s\r\n");
     long pub = -1, mer = -1, seen_at = 0;
+    int gate_said = 1;                               /* open says nothing (a PC: as before) */
     for (;;) {
         tk_dly_tsk(1000);
         if (mind_paused_for_hibernation()) continue;
+#ifndef B5_NC_NO_GATE
+        {
+            int g = pk_b5_allow;
+            if (g != gate_said) {
+                r_puts(g ? "[baby] round gate open\r\n" : "[baby] round gate closed\r\n");
+                gate_said = g;
+            }
+            if (!g) continue;
+        }
+#endif
 #ifndef B5W_NC_NO_STOP
         if (swarm_stop_is_stopped()) continue;
 #endif
