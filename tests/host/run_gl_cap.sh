@@ -22,8 +22,14 @@
 #   G4a the other three finish
 #   G4d at least one "[gl] peer cache: node P pushes out node 2" line, and no
 #       push-out line names another node (only 2 lost its row)
+#   G4e (audit-235) the push-out took: no survivor refuses an id other than 2
+#       ("peer cache full: refused N (node 2)" after the push-out is the dead
+#       id's old model, seen 3/3 in 3 of 4 plain runs), and none pushes out id 2
+#       more than once (the slot then holds the new owner). Audit-235 mutation
+#       "logonly" (the push-out logged, the slot not handed over) was ALL PASS
+#       on G4a/G4d: 44 push-outs, 15 refusals of the new owner
 # Falsifier: GLCAP_CFLAGS="-DGL_PC_SLOTS=2 -DSWIM_PEERS=2 -DGL_NC_NO_PUSH"
-# (the rule removed) => G4d red.
+# (the rule removed) => G4d and G4e red.
 # Env: GLCAP_ARM (cap|push), GLCAP_CFLAGS (default -DGL_PC_SLOTS=2, push:
 # -DGL_PC_SLOTS=2 -DSWIM_PEERS=2), GLCAP_PORT, GLCAP_WORK (kept).
 set -u
@@ -89,6 +95,15 @@ if [ "$ARM" = push ]; then
     pother=$(cat "$W"/n?.log | tr -d '\r' | grep -a 'pushes out node ' | grep -avc 'pushes out node 2 ')
     if [ "$p4" -ge 1 ] && [ "$pother" = 0 ]; then echo "[gl-cap] G4d PASS ($p4 push-outs of id 2, 0 of others)"
     else echo "[gl-cap] G4d FAIL (push-outs of id 2: $p4, of others: $pother)"; bad=1; fi
+    nref=0; nrep=0
+    for k in 1 2 4; do
+        r=$(tr -d '\r' < "$W/n$k.log" | grep -a 'peer cache full: refused' | grep -avc '(node 2)$')
+        q=$(tr -d '\r' < "$W/n$k.log" | grep -ac 'pushes out node 2 ')
+        nref=$((nref + r)); [ "$q" -gt 1 ] && nrep=$((nrep + 1))
+        echo "[gl-cap] PKERNEL_NODE_ID=$k: refused $r, push-outs of id 2 $q"
+    done
+    if [ "$nref" = 0 ] && [ "$nrep" = 0 ]; then echo "[gl-cap] G4e PASS (0 refusals of a live id, no node pushed id 2 out twice)"
+    else echo "[gl-cap] G4e FAIL (refusals of a live id $nref, nodes that pushed id 2 out more than once $nrep)"; bad=1; fi
     if [ "$bad" = 0 ]; then echo "[gl-cap] ALL PASS"; exit 0; fi
     echo "[gl-cap] RED"; exit 1
 fi
