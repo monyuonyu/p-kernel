@@ -12,7 +12,8 @@
 # Falsifier: B5G_CFLAGS=-DB5_NC_NO_GATE (the task never reads the gate) => A1a red.
 # Env: B5G_PORT (relay, default 7541), B5G_WORK=<dir> keeps the logs, B5G_CFLAGS.
 # Rebuilds boot/linux* and cleans it. In CI: shipped-llm-certs (the plain arm
-# ALL PASS, the NO_GATE arm red on A1a with A1b green).
+# ALL PASS, the NO_GATE arm red on A1a; its A1b is red too, as a task that
+# never reads the gate never says "round gate open").
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
