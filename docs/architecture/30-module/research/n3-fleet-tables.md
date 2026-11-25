@@ -25,4 +25,5 @@ dkva・kdds・degrade は「減る」: `for (UB n = 0; n < DNODE_MAX; n++)` が 
 
 - 増えの 64% は r3_incontext（N2 で行を pk_node_row にした表＝DNODE_ROWS で伸びる）。**次の段は r3_incontext の 3 本（mq_ask_state・keep・mw_ann_man）を先に、その後 moe・world・pmesh**。ROADMAP の順（world/moe/pmesh）は、r3 を測る前に決めた順と読む
 - 1024 台での増えは 1 台あたり 160 KB で、65,534 番号まで広げると約 10 MB。急ぐのはメモリより「全番号を回る CPU」（N3 2b の限界）と UB ループ（256 台で止まらない）の方かもしれない＝次の設計の回で、表の大きさと一緒に「DNODE_MAX を回るループの数」も数える
+- **てこは pk_node_row.h**: r3 の伸びる表（mq_ask_state・mw_ann_man・mt_last_seq・mw_peer_epoch…、keep は mqa_test の写し）は N2 で `DNODE_ROWS`＝DNODE_MAX＋広い番号 32 行にした表。行 0..DNODE_MAX-1 は番号そのもの。pk_node_row を「全番号が枠を取る R 行」にすれば、使う 5 物（drpc・r3・pfs_repl・region・protect）の表が一度に一定になる。分かれ道（次の設計で決める）: 満杯のとき断る（今と同じ）か、古い行を渡すか（重複の見張りの記憶が消える＝再送を受け入れる危険）
 - 限界: 静的データだけ。malloc・スタックの [DNODE_MAX]（gl_fold_cached_peers の ptrs のような）は見えない
