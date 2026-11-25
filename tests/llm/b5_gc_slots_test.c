@@ -32,8 +32,11 @@
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
- *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2 and gcs-vic3 (no guard table);
- *  -DB5_NC_GC_NO_VIC gcs-vic and gcs-vic3 (step 3: the victim is not in gl.gcref).
+ *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2, gcs-vic3 and gcs-vic4 (no guard table);
+ *  -DB5_NC_GC_NO_VIC gcs-vic, gcs-vic3 and gcs-vic4 (step 3: the victim is not in gl.gcref);
+ *  -DB5_NC_GC_WALK_STOP gcs-vic4 (the drop walk stops at a leaf it cannot read).
+ *    [gcs-vic4]     step 3 limit 1: a depth-2 victim (3 leaves) killed during
+ *                   its drop after the first leaf; the restart drops the rest
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -50,6 +53,7 @@ extern int  pfs_has(const unsigned char id[32]);
 extern void pfs_id_compute(const void *buf, unsigned int len, unsigned char id[32]);
 extern void gl_gc_test_mute(int on);
 extern void gl_gc_test_cut_next(void);
+extern void gl_gc_test_cut_leaf_next(void);
 extern unsigned gl_gc_test_shorts(void);
 extern void gl_gc_test_note(node_t node, const unsigned char root[32], unsigned depth, unsigned nchunk);
 extern void gl_gc_test_pend(node_t node, const unsigned char root[32], unsigned depth, unsigned nchunk);
@@ -70,6 +74,8 @@ static void emit(const char *s) { fputs(s, stdout); }
 #define BLOB_LEN 10000u
 #define CHUNK 4096u              /* GL_ST_CHUNK = PFS_BLOCK_MAX */
 #define NCH ((BLOB_LEN + CHUNK - 1) / CHUNK)
+#define BIG_NCH 300u             /* [gcs-vic4]: 3 leaves of 127, 127, 46 = depth 2 */
+#define BIG_LEN (BIG_NCH * CHUNK - 100u)
 typedef struct { unsigned char root[32]; unsigned depth, nchunk; unsigned char cid[NCH][32]; } gen_t;
 static unsigned g_seed = 0x6c5u;
 
@@ -261,6 +267,40 @@ int main(void)
            shared, va, vb, vk, vw);
     CHECK(shared && va == NCH + 1u && vb == 1u && vk && vw,
           "[gcs-vic3] the restart's drop of a victim spares the chunk a kept generation shares");
+
+    /* limit 1 of step 3 (research/b5-gc-restart.md §4d, test first): a depth-2
+     * victim (3 leaves), "killed" during its drop right after the first leaf
+     * index went (the walk drops a leaf's chunks, then the leaf, the root
+     * last). The restart's walk must not stop at the gone leaf: the chunks of
+     * leaves 2 and 3 and the root go too. */
+    static unsigned char bigb[BIG_LEN];
+    for (unsigned i = 0; i < BIG_LEN; i++) { g_seed = g_seed * 1103515245u + 12345u; bigb[i] = (unsigned char)(g_seed >> 16); }
+    unsigned char broot[32]; unsigned bdepth = 0, bn = 0;
+    if (gl_student_publish(200, bigb, BIG_LEN) <= 0) { printf("[setup] big publish failed\n"); return 2; }
+    gl_gc_test_desc(broot, &bdepth, &bn);
+    static unsigned char bcid[BIG_NCH][32];
+    for (unsigned c = 0; c < BIG_NCH; c++) {
+        unsigned off = c * CHUNK, len = BIG_LEN - off < CHUNK ? BIG_LEN - off : CHUNK;
+        pfs_id_compute(bigb + off, len, bcid[c]);
+    }
+    gl_gc_test_note(16, broot, bdepth, bn);       /* peer 16 keeps the big one */
+    gen_t n16 = make_gen();
+    gl_gc_test_cut_leaf_next();
+    gl_gc_test_note(16, n16.root, n16.depth, n16.nchunk);   /* "killed" after leaf 1's drop */
+    cur[16] = n16;
+    unsigned bk = 0, ba = 0;
+    for (unsigned c = 0; c < BIG_NCH; c++) bk += pfs_has(bcid[c]) != 0;
+    gl_gc_test_restart();
+    gen_t g2b = make_gen();               /* any change reads the roots back */
+    gl_gc_test_note(2, g2b.root, g2b.depth, g2b.nchunk);
+    cur[2] = g2b;
+    for (unsigned c = 0; c < BIG_NCH; c++) ba += pfs_has(bcid[c]) != 0;
+    int broot_here = pfs_has(broot) != 0;
+    printf("[gcs] a depth-%u victim of %u chunks killed after its first leaf: %u chunks here at the kill,"
+           " %u after the restart, its root here %d, peer 16's new whole %d\n",
+           bdepth, bn, bk, ba, broot_here, whole(&n16));
+    CHECK(bdepth == 2 && bn == BIG_NCH && bk == BIG_NCH - 127u && ba == 0 && !broot_here && whole(&n16),
+          "[gcs-vic4] a depth-2 victim killed during its drop is dropped whole after the restart (the walk goes past a gone leaf)");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

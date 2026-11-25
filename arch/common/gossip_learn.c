@@ -437,6 +437,7 @@ static INT  gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
 
 #if defined(GL_GC_TEST)
 static UW gl_gc_test_short;        /* drops whose index was not all here (the G2 line) */
+static UB gl_gc_test_cutleaf;      /* [gcs-vic4]: a drop walk "killed" after its first leaf */
 #endif
 /* drop what the guard (built just before) lacks of one generation; one line */
 static void gl_gc_drop_gen(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk, const char *what)
@@ -561,6 +562,7 @@ static INT gl_gc_index(const U1 id[PFS_ID_LEN], GL_ST_INDEX *ix, UW level, UW co
 static INT gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
 {
     UW nleaf = (nchunk + GL_ST_IDS_PER_IDX - 1) / GL_ST_IDS_PER_IDX;
+    INT short_ = 0;                             /* mode 2: a leaf could not be read */
 #define GL_GC_ONE(id) do { if (mode == 0) { if (gl_gc_hash((id), 0) < 0) return -2; } \
         else if (mode == 3) { gl_gc_seen++; if (pfs_has(id)) gl_gc_present++; } \
         else { gl_gc_seen++; if (!gl_gc_hash((id), 1) && pfs_drop(id) == PFS_OK) gl_gc_dropped++; } } while (0)
@@ -572,14 +574,27 @@ static INT gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
         for (UW lf = 0; lf < nleaf; lf++) {
             UW cnt = nchunk - lf * GL_ST_IDS_PER_IDX;
             if (cnt > GL_ST_IDS_PER_IDX) cnt = GL_ST_IDS_PER_IDX;
-            if (gl_gc_index(gl_gc_root.id[lf], &gl_gc_leaf, 0u, cnt) < 0) return -1;
+            if (gl_gc_index(gl_gc_root.id[lf], &gl_gc_leaf, 0u, cnt) < 0) {
+#if !defined(B5_NC_GC_WALK_STOP)
+                /* step 3 limit 1 ([gcs-vic4]): a drop goes past a leaf it cannot
+                 * read (a kill during an earlier drop took it after its chunks;
+                 * a fetch cut short never had it) and drops the rest and the
+                 * root; still -1 = "not all here". Before, the walk stopped
+                 * here and the later leaves and the root stayed for good. */
+                if (mode == 2) { short_ = 1; GL_GC_ONE(gl_gc_root.id[lf]); continue; }
+#endif
+                return -1;
+            }
             for (UW j = 0; j < cnt; j++) GL_GC_ONE(gl_gc_leaf.id[j]);
             GL_GC_ONE(gl_gc_root.id[lf]);       /* the leaf block itself */
+#if defined(GL_GC_TEST)
+            if (mode == 2 && gl_gc_test_cutleaf) { gl_gc_test_cutleaf = 0; return -3; }  /* killed here */
+#endif
         }
     }
     GL_GC_ONE(root);                            /* the root (or only) index block */
 #undef GL_GC_ONE
-    return 0;
+    return short_ ? -1 : 0;
 }
 
 static INT gl_gc_eq(const U1 *a, const U1 *b)
@@ -785,6 +800,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
 static UB gl_gc_test_muted;
 void gl_gc_test_mute(INT on) { gl_gc_test_muted = (UB)(on != 0); }
 void gl_gc_test_cut_next(void) { gl_gc_test_cut = 1; }
+void gl_gc_test_cut_leaf_next(void) { gl_gc_test_cutleaf = 1; }
 UW   gl_gc_test_shorts(void) { return gl_gc_test_short; }
 void gl_gc_test_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_note(node, root, depth, nchunk, 0); }
 void gl_gc_test_pend(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_pend(node, root, depth, nchunk); }
