@@ -3658,6 +3658,22 @@ jobs:
       # count. About 4 min (relay + 2 nodes, three arms).
       - name: B5 D4 chunk fsyncs ([b5-d4] W13c at S and M, falsifier FSYNC_EACH red by the count)
         run: bash tests/llm/run_b5_d4.sh
+      # B5AG A1 (research/b5-android-gate.md): the B5 round gate holds the
+      # rounds while closed (`baby gate 0`) and lets them go when opened
+      # (relay + 2 hosted nodes, tier S, 60 s rounds). The falsifier
+      # -DB5_NC_NO_GATE (the task never reads the gate) must turn A1a red and
+      # leave A1b green. About 8 min (two arms, one after the other: both
+      # rebuild boot/linux_x86_64).
+      - name: "[b5-gate] A1 the round gate holds B5 rounds while closed (falsifier NO_GATE red on A1a only)"
+        run: |
+          timeout 600 bash tests/host/run_b5_gate.sh | tee b5_gate.log
+          grep -aF '[b5-gate] ALL PASS' b5_gate.log
+          rc=0; B5G_CFLAGS=-DB5_NC_NO_GATE timeout 600 bash tests/host/run_b5_gate.sh > b5_gate_nc.log 2>&1 || rc=1
+          cat b5_gate_nc.log
+          test "$rc" = 1
+          grep -aF '[b5-gate] A1a FAIL' b5_gate_nc.log
+          grep -aF '[b5-gate] A1b PASS' b5_gate_nc.log
+          grep -aF '[b5-gate] RED' b5_gate_nc.log
 
   st-quant:
     # Brain self-quantization stage 1 (docs/architecture/30-module/research/
