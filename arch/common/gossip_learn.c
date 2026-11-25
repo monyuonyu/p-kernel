@@ -434,11 +434,17 @@ static INT  gl_gc_guard(void);
 static INT  gl_gc_eq(const U1 *a, const U1 *b);
 static INT  gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode);
 
+#if defined(GL_GC_TEST)
+static UW gl_gc_test_short;        /* drops whose index was not all here (the G2 line) */
+#endif
 /* drop what the guard (built just before) lacks of one generation; one line */
 static void gl_gc_drop_gen(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk, const char *what)
 {
     gl_gc_dropped = 0; gl_gc_seen = 0;
     INT w = gl_gc_walk(root, depth, nchunk, 2);
+#if defined(GL_GC_TEST)
+    if (w < 0) gl_gc_test_short++;
+#endif
     gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
     gpd(gl_gc_seen); gp(" ids of "); gp(what);
     gp(w < 0 ? " (its index was not all here)\r\n" : "\r\n");
@@ -492,8 +498,13 @@ static void gl_gc_load(void)
     for (UW i = 0; i < GL_GC_REFS; i++) {
         GL_GC_REF *r = &gl_gc_ref[i];
         if (!r->used || !r->vpend) continue;
-        if (gl_gc_guard() != 0) continue;
-        gl_gc_drop_gen(r->node, r->vroot, r->vdepth, r->vn, "a cleanup cut short by a restart");
+        /* the root index goes last: gone = the drop was done before the kill
+         * (vpend is cleared in RAM only, so the file still names it). Live
+         * h3q, 3 arms of 4: walking it printed "not all here" (G2 red). */
+        if (pfs_has(r->vroot)) {
+            if (gl_gc_guard() != 0) continue;
+            gl_gc_drop_gen(r->node, r->vroot, r->vdepth, r->vn, "a cleanup cut short by a restart");
+        }
         r->vpend = 0;
         gl_gc_store();
     }
@@ -773,6 +784,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
 static UB gl_gc_test_muted;
 void gl_gc_test_mute(INT on) { gl_gc_test_muted = (UB)(on != 0); }
 void gl_gc_test_cut_next(void) { gl_gc_test_cut = 1; }
+UW   gl_gc_test_shorts(void) { return gl_gc_test_short; }
 void gl_gc_test_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_note(node, root, depth, nchunk, 0); }
 void gl_gc_test_pend(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW nchunk) { gl_gc_pend(node, root, depth, nchunk); }
 void gl_gc_test_restart(void)                   /* RAM forgotten, as after a kill */

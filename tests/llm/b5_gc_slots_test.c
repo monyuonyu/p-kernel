@@ -30,7 +30,7 @@
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
- *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds and gcs-vic (no guard table);
+ *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic and gcs-vic2 (no guard table);
  *  -DB5_NC_GC_NO_VIC gcs-vic (step 3: the victim is not in gl.gcref).
  */
 #define _POSIX_C_SOURCE 200809L
@@ -48,6 +48,7 @@ extern int  pfs_has(const unsigned char id[32]);
 extern void pfs_id_compute(const void *buf, unsigned int len, unsigned char id[32]);
 extern void gl_gc_test_mute(int on);
 extern void gl_gc_test_cut_next(void);
+extern unsigned gl_gc_test_shorts(void);
 extern void gl_gc_test_note(node_t node, const unsigned char root[32], unsigned depth, unsigned nchunk);
 extern void gl_gc_test_pend(node_t node, const unsigned char root[32], unsigned depth, unsigned nchunk);
 extern void gl_gc_test_restart(void);
@@ -207,6 +208,24 @@ int main(void)
            " %u after the restart, %u after peer 9's next generation\n", hc, hr, hn);
     CHECK(hc == NCH + 1u && hr == 0 && hn == 0 && whole(&w9),
           "[gcs-vic] a victim the kill left between the write and the drop is dropped after the restart");
+
+    /* step 3, live h3q 3 arms of 4 on 64870212: the drop was done before the
+     * kill, but the file still named the victim (cleared in RAM only); the
+     * restart walked a gone generation and printed "not all here" (G2 red).
+     * A victim already dropped is forgotten without a short walk. */
+    gen_t old11 = cur[11], v11 = make_gen();
+    gl_gc_test_note(11, v11.root, v11.depth, v11.nchunk);   /* drop done, no later write */
+    cur[11] = v11;
+    unsigned hd11 = here(&old11);
+    unsigned s0 = gl_gc_test_shorts();
+    gl_gc_test_restart();
+    gen_t g12 = make_gen();
+    gl_gc_test_note(12, g12.root, g12.depth, g12.nchunk);
+    cur[12] = g12;
+    unsigned s1 = gl_gc_test_shorts();
+    printf("[gcs] a victim dropped before the kill: %u ids here, short walks after the restart %u\n", hd11, s1 - s0);
+    CHECK(hd11 == 0 && s1 == s0 && whole(&v11) && whole(&g12),
+          "[gcs-vic2] a victim dropped before the kill is forgotten after the restart without a short walk");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

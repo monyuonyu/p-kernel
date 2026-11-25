@@ -5,13 +5,13 @@
 # generation does not stop the cleanup. Seconds, no network.
 #
 #   [gcs-full] [gcs-evict] [gcs-17th] [gcs-fresh] [gcs-pend] [gcs-pend2] [gcs-lost] [gcs-holds]
-#   [gcs-vic] (step 3: a kill between a note's write and its drop)
+#   [gcs-vic] [gcs-vic2] (step 3: a kill between a note's write and its drop; a victim already dropped)
 #   (b5_gc_slots_test.c; gossip_learn.c built with -DGL_GC_TEST, test hooks only)
 #
 # Falsifiers, each must turn exactly its checks red:
 #   -DB5_NC_GC_NO_EVICT   [gcs-evict] [gcs-17th]
 #   -DB5_NC_GC_NO_PEND    [gcs-pend] [gcs-pend2]
-#   -DB5_NC_GC_KEEP_LOST  [gcs-lost] [gcs-holds] [gcs-vic] (no guard table after the lost index)
+#   -DB5_NC_GC_KEEP_LOST  [gcs-lost] [gcs-holds] [gcs-vic] [gcs-vic2] (no guard table after the lost index)
 #   -DB5_NC_GC_NO_VIC     [gcs-vic]
 #
 #   bash tests/llm/run_b5_gc_slots.sh      exit 0 = PASS
@@ -87,7 +87,7 @@ nc nopend  -DB5_NC_GC_NO_PEND   "gcs-pend gcs-pend2"
 # KEEP_LOST: the guard never gets built again after the lost index, so
 # gl_gc_holds (2b) has no table either = [gcs-holds] goes red with it
 # (and no guard = the victim [gcs-vic] leaves after the restart is not dropped either)
-nc keeplost -DB5_NC_GC_KEEP_LOST "gcs-holds gcs-lost gcs-vic"
+nc keeplost -DB5_NC_GC_KEEP_LOST "gcs-holds gcs-lost gcs-vic gcs-vic2"
 nc novic    -DB5_NC_GC_NO_VIC    "gcs-vic"
 
 echo ""
