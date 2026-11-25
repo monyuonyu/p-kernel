@@ -32,18 +32,25 @@
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
- *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2, gcs-vic3 and gcs-vic4 (no guard table);
+ *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2..gcs-vic5 (no guard table);
  *  -DB5_NC_GC_NO_VIC gcs-vic, gcs-vic3 and gcs-vic4 (step 3: the victim is not in gl.gcref);
- *  -DB5_NC_GC_WALK_STOP gcs-vic4 (the drop walk stops at a leaf it cannot read).
+ *  -DB5_NC_GC_WALK_STOP gcs-vic4 and gcs-vic5 (the drop walk stops at a leaf it cannot read);
+ *  -DB5_NC_GC_LEAF_KEEP gcs-vic5.
  *    [gcs-vic4]     step 3 limit 1: a depth-2 victim (3 leaves) killed during
  *                   its drop after the first leaf; the restart drops the rest
+ *    [gcs-vic5]     audit-237 (GLS limit 1): a leaf here but unreadable (its
+ *                   file rotted) is dropped by the walk too; -DB5_NC_GC_LEAF_KEEP
+ *                   (skip the leaf, keep its id) and -DB5_NC_GC_WALK_STOP turn it red;
+ *                   the walk still counts as "not all here" (1 short walk)
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef unsigned short node_t;
+extern int  pfs_get(const unsigned char id[32], void *buf, unsigned int maxlen);
 extern int  gl_student_publish(node_t node, const void *blob, unsigned int len);
 extern int  pfs_durable_restore(void (*emit)(const char *));
 extern int  pfs_durable_active(void);
@@ -301,6 +308,58 @@ int main(void)
            bdepth, bn, bk, ba, broot_here, whole(&n16));
     CHECK(bdepth == 2 && bn == BIG_NCH && bk == BIG_NCH - 127u && ba == 0 && !broot_here && whole(&n16),
           "[gcs-vic4] a depth-2 victim killed during its drop is dropped whole after the restart (the walk goes past a gone leaf)");
+
+    /* audit-237 limit 1 of GLS: a leaf index block that is HERE but cannot be
+     * read (its file rotted: the bytes no longer hash to its id). Peer 15
+     * keeps a depth-2 generation, leaf 2's file is overwritten, then peer 15
+     * moves on (a plain drop walk, no kill). The walk must drop the rotten
+     * leaf's id too (its file), leaves 1 and 3, and the root. Leaf 2's own
+     * 127 chunks stay: their ids are only in the rotten leaf (the known leak).
+     * Before this check, a walk that skipped the leaf without dropping its id
+     * (audit-237 noleafdrop) was green everywhere. */
+    static unsigned char cb[BIG_LEN];
+    for (unsigned i = 0; i < BIG_LEN; i++) { g_seed = g_seed * 1103515245u + 12345u; cb[i] = (unsigned char)(g_seed >> 16); }
+    unsigned char croot[32]; unsigned cdepth = 0, cn = 0;
+    if (gl_student_publish(200, cb, BIG_LEN) <= 0) { printf("[setup] rotten-leaf publish failed\n"); return 2; }
+    gl_gc_test_desc(croot, &cdepth, &cn);
+    static unsigned char ccid[BIG_NCH][32];
+    for (unsigned c = 0; c < BIG_NCH; c++) {
+        unsigned off = c * CHUNK, len = BIG_LEN - off < CHUNK ? BIG_LEN - off : CHUNK;
+        pfs_id_compute(cb + off, len, ccid[c]);
+    }
+    gl_gc_test_note(15, croot, cdepth, cn);       /* peer 15 keeps it */
+    static unsigned char rb[CHUNK];
+    int rl = pfs_get(croot, rb, sizeof rb);
+    unsigned magic = (unsigned)rb[0] | (unsigned)rb[1] << 8 | (unsigned)rb[2] << 16 | (unsigned)rb[3] << 24;
+    unsigned char leaf2[32];
+    memcpy(leaf2, rb + 16 + 32, 32);              /* GL_ST_IDX_HDR 16, then the leaf ids */
+    char lpath[1024], hx[65];
+    for (unsigned i = 0; i < 32; i++) snprintf(hx + 2 * i, 3, "%02x", leaf2[i]);
+    const char *dir = getenv("PKERNEL_PFS_DIR");
+    snprintf(lpath, sizeof lpath, "%s/%s", dir ? dir : ".", hx);
+    pfs_drop(leaf2);                              /* out of P0 and its file ... */
+    FILE *lf = fopen(lpath, "wb");                /* ... and back as rotten bytes */
+    if (!lf) { printf("[setup] cannot write %s\n", lpath); return 2; }
+    for (int i = 0; i < 1000; i++) fputc(0xA5, lf);
+    fclose(lf);
+    int rot_here = access(lpath, F_OK) == 0, rot_has = pfs_has(leaf2) != 0;
+    gen_t n15 = make_gen();
+    unsigned sh0 = gl_gc_test_shorts();
+    gl_gc_test_note(15, n15.root, n15.depth, n15.nchunk);    /* the drop walk */
+    unsigned shn = gl_gc_test_shorts() - sh0;     /* GLS limit 2: the walk still says "not all here" */
+    cur[15] = n15;
+    unsigned ends = 0, mid = 0;
+    for (unsigned c = 0; c < BIG_NCH; c++) {
+        if (!pfs_has(ccid[c])) continue;
+        if (c >= 127u && c < 254u) mid++; else ends++;
+    }
+    int rot_after = access(lpath, F_OK) == 0, croot_here = pfs_has(croot) != 0;
+    printf("[gcs] a depth-%u generation of %u chunks (root %d B, magic %s) with a rotten leaf 2: file here %d, readable %d;"
+           " after its drop: leaves 1+3 chunks here %u, leaf 2 chunks here %u, the rotten file here %d, root here %d, short walks %u, peer 15's new whole %d\n",
+           cdepth, cn, rl, magic == 0x58494C47u ? "GLIX" : "?", rot_here, rot_has, ends, mid, rot_after, croot_here, shn, whole(&n15));
+    CHECK(cdepth == 2 && cn == BIG_NCH && rl == 16 + 3 * 32 && magic == 0x58494C47u && rot_here && !rot_has
+          && ends == 0 && mid == 127u && !rot_after && !croot_here && shn == 1u && whole(&n15),
+          "[gcs-vic5] a leaf here but unreadable (a rotten file) is dropped with the rest of the walk; only its own chunks stay");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

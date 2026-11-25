@@ -581,7 +581,11 @@ static INT gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
                  * a fetch cut short never had it) and drops the rest and the
                  * root; still -1 = "not all here". Before, the walk stopped
                  * here and the later leaves and the root stayed for good. */
+#if defined(B5_NC_GC_LEAF_KEEP)     /* falsifier for [gcs-vic5]: skip, keep the leaf's id */
+                if (mode == 2) { short_ = 1; continue; }
+#else
                 if (mode == 2) { short_ = 1; GL_GC_ONE(gl_gc_root.id[lf]); continue; }
+#endif
 #endif
                 return -1;
             }
@@ -778,6 +782,9 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     if (gl_gc_guard() < 0) return;
     gl_gc_dropped = 0; gl_gc_seen = 0;
     INT w = gl_gc_walk(vic, vdepth, vn, 2);
+#if defined(GL_GC_TEST)
+    if (w < 0) gl_gc_test_short++;              /* [gcs-vic5]: the note's drop says "not all here" too */
+#endif
     r->vpend = 0;                               /* in RAM; the next write says so */
     gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
     gpd(gl_gc_seen); gp(w < 0 ? " ids (the old generation was not all here)\r\n" : (keep == 2 ? " ids of the own generation two back\r\n" : " ids of the peer's generation one back\r\n"));
