@@ -23,6 +23,12 @@
 - 陰性: `-DB5_NC_NO_GATE`（門を見ない）→ A1 赤。Kotlin は「分からないを開く」壊しで A2 赤
 - 限界（先に書く）: 実機と emulator では確かめられない（この機体に Android の環境が無い。CI の emulator smoke は周を見ない）
 
+## 3b. 実装（同じ回、feat/b5-android-gate 391d7301・73aff633、監査待ち）
+
+- カーネル: r3_incontext.c の `pk_b5_allow`（hosted だけ）＋`pk_b5_gate_set/get`、閉じた・開いたを 1 行（既定の開は何も言わない＝PC のログは前と同じ）。`baby gate [0|1]`（student_shell.c、弱い参照）。陰性 `-DB5_NC_NO_GATE`。JNI: nativeBoot で 21600 秒と門 0、`nativeSetB5Allowed`。Kotlin: RunGate.kt に `B5Gate`、PKernelService は起動の後と毎回の reconcileGate で送る
+- 実装者の結果（容器 /build/a235/gate.txt と手元、監査ではない）: **A1 3 腕同時: 枝 ALL PASS、NO_GATE は A1a 赤（閉じている間に publish 4 行）、master の木は A1a 赤（口が無く publish 8 行）。A2: 枝 11/0、陰性 5 つとも狙いの項目だけ赤（B5 の 2 つは B1・B2）、master の RunGate.kt では B5Gate が無くビルドが落ちる**
+- 限界: PKernelService.kt と JNI は手元でビルドしていない（Android の環境が無い、CI の Android のビルドで初めて見る）。A1 は CI に配線していない
+
 ## 4. 選ばなかった案
 
 - 星の門（runAllowed）に充電を足す: 電池で動く参加（今の既定）ごと止まる
