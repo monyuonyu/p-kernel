@@ -32,8 +32,11 @@
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
- *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2 and gcs-vic3 (no guard table);
- *  -DB5_NC_GC_NO_VIC gcs-vic and gcs-vic3 (step 3: the victim is not in gl.gcref).
+ *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2, gcs-vic3 and gcs-vic4 (no guard table);
+ *  -DB5_NC_GC_NO_VIC gcs-vic, gcs-vic3 and gcs-vic4 (step 3: the victim is not in gl.gcref);
+ *  -DB5_NC_GC_WALK_STOP gcs-vic4 (the drop walk stops at a leaf it cannot read).
+ *    [gcs-vic4]     step 3 limit 1: a depth-2 victim (3 leaves) killed during
+ *                   its drop after the first leaf; the restart drops the rest
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
