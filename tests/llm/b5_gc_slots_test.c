@@ -27,11 +27,13 @@
  *    [gcs-vic]      audit-232, test first (red on ad94eb1f): a kill after a
  *                   note's gl.gcref write, before its drop, leaves the victim
  *                   on no root; it must be dropped after the restart
+ *    [gcs-vic3]     audit-233: the restart's drop of a victim builds the guard
+ *                   first (a chunk shared with a kept generation stays)
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
- *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic and gcs-vic2 (no guard table);
- *  -DB5_NC_GC_NO_VIC gcs-vic (step 3: the victim is not in gl.gcref).
+ *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds, gcs-vic, gcs-vic2 and gcs-vic3 (no guard table);
+ *  -DB5_NC_GC_NO_VIC gcs-vic and gcs-vic3 (step 3: the victim is not in gl.gcref).
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -71,10 +73,11 @@ static void emit(const char *s) { fputs(s, stdout); }
 typedef struct { unsigned char root[32]; unsigned depth, nchunk; unsigned char cid[NCH][32]; } gen_t;
 static unsigned g_seed = 0x6c5u;
 
+static unsigned char blob[BLOB_LEN];
+static unsigned g_keep;              /* audit-233: bytes kept from the last blob (a shared chunk) */
 static gen_t make_gen(void)          /* a fresh generation in the store */
 {
-    static unsigned char blob[BLOB_LEN];
-    for (unsigned i = 0; i < BLOB_LEN; i++) { g_seed = g_seed * 1103515245u + 12345u; blob[i] = (unsigned char)(g_seed >> 16); }
+    for (unsigned i = g_keep; i < BLOB_LEN; i++) { g_seed = g_seed * 1103515245u + 12345u; blob[i] = (unsigned char)(g_seed >> 16); }
     gen_t g; memset(&g, 0, sizeof g);
     if (gl_student_publish(200, blob, BLOB_LEN) <= 0) { printf("[setup] publish failed\n"); exit(2); }
     gl_gc_test_desc(g.root, &g.depth, &g.nchunk);
@@ -226,6 +229,38 @@ int main(void)
     printf("[gcs] a victim dropped before the kill: %u ids here, short walks after the restart %u\n", hd11, s1 - s0);
     CHECK(hd11 == 0 && s1 == s0 && whole(&v11) && whole(&g12),
           "[gcs-vic2] a victim dropped before the kill is forgotten after the restart without a short walk");
+
+    /* audit-233: the restart's drop of a named victim builds the guard first.
+     * Peer 14's victim a14 shares its first chunk with peer 13's kept k13 (two
+     * generations of one model share the blocks of the weights that did not
+     * move). After the restart that chunk must stay (k13 whole), the rest of
+     * a14 must go. Before this, gl_gc_test_restart kept the last guard table,
+     * so a drop without its own guard still spared the kept set. */
+    gen_t k13 = make_gen();
+    gl_gc_test_note(13, k13.root, k13.depth, k13.nchunk);
+    cur[13] = k13;
+    g_keep = CHUNK;                       /* a14's first chunk = k13's */
+    gen_t a14 = make_gen();
+    g_keep = 0;
+    int shared = memcmp(a14.cid[0], k13.cid[0], 32) == 0;
+    gl_gc_test_note(14, a14.root, a14.depth, a14.nchunk);
+    cur[14] = a14;
+    gen_t b14 = make_gen();
+    gl_gc_test_cut_next();
+    gl_gc_test_note(14, b14.root, b14.depth, b14.nchunk);   /* "killed" before a14's drop */
+    cur[14] = b14;
+    unsigned va = here(&a14);
+    gl_gc_test_restart();
+    gen_t g15 = make_gen();               /* any change reads the roots back */
+    gl_gc_test_note(15, g15.root, g15.depth, g15.nchunk);
+    cur[15] = g15;
+    unsigned vb = here(&a14);
+    int vk = whole(&k13), vw = whole(&b14);
+    printf("[gcs] a victim sharing a chunk with a kept generation: shared %d, victim %u ids here at the kill,"
+           " %u after the restart (1 = the shared chunk), the kept whole %d, peer 14's new whole %d\n",
+           shared, va, vb, vk, vw);
+    CHECK(shared && va == NCH + 1u && vb == 1u && vk && vw,
+          "[gcs-vic3] the restart's drop of a victim spares the chunk a kept generation shares");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
