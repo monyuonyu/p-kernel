@@ -387,6 +387,19 @@ typedef struct {
     UB        pdepth;
     UW        pnchunk;
     UW        last;                 /* gl_gc_tick at its last change */
+    /* gc-restart step 3 (after audit-232 🔁GCR2): the victim of a note, in the
+     * same gl.gcref write as the new root, until its drop is done. Before, a
+     * kill after that write and before the drop left it on no root for good
+     * (h3q, R1 1.057 in 1 arm of 4). Cleared in RAM after the drop; the next
+     * write says so (no extra fsync). A restart walks it again (the walk drops
+     * the root index last). Left: a kill inside the drop of a 2-level victim
+     * after a leaf index went stops the second walk at that leaf (the later
+     * leaves stay; not measured, the unit test's generations are 1-level).
+     * Falsifier -DB5_NC_GC_NO_VIC: never recorded. */
+    UB        vpend;                /* 1 = vroot is to be dropped      */
+    UB        vdepth;
+    UW        vn;
+    U1        vroot[PFS_ID_LEN];
 } GL_GC_REF;
 static GL_GC_REF   gl_gc_ref[GL_GC_REFS];
 static UW          gl_gc_tick;                   /* changes of any ref */
@@ -409,7 +422,7 @@ extern int pfs_dur_write(const char *fname, const void *data, unsigned len) __at
 extern int pfs_dur_read(const char *fname, void *buf, unsigned maxlen) __attribute__((weak));
 #define GL_GC_FILE   "gl.gcref"
 #define GL_GC_MAGIC  0x46524347u                /* "GCRF" */
-#define GL_GC_VER    2u                         /* 2: pend/proot/last and the tick */
+#define GL_GC_VER    3u                         /* 2: pend/proot/last and the tick; 3: the victim */
 typedef struct {
     UW        magic, ver, refs, refsz, tick;
     GL_GC_REF ref[GL_GC_REFS];
@@ -449,7 +462,8 @@ static void gl_gc_load(void)
     for (UW i = 0; i < GL_GC_REFS; i++) {
         const GL_GC_REF *s = &gl_gc_save.ref[i];
         if (s->used > 1u || s->own > 1u || s->n > (s->own ? 2u : 1u) || s->pend > 1u
-            || (s->pend && s->pdepth != 1u && s->pdepth != 2u)) {
+            || (s->pend && s->pdepth != 1u && s->pdepth != 2u)
+            || s->vpend > 1u || (s->vpend && s->vdepth != 1u && s->vdepth != 2u)) {
             gp("[b5-gc] roots: gl.gcref not used (a bad ref)\r\n");
             return;
         }
@@ -471,6 +485,17 @@ static void gl_gc_load(void)
         r->pend = 0;
         gl_gc_store();
         if (gl_gc_guard() == 0) gl_gc_drop_gen(r->node, p, pd, pn, "a fetch cut short by a restart");
+    }
+    /* step 3: a note's victim the kill left before (or during) its drop. Dropped
+     * first, then forgotten (written): a kill during this drop walks it again.
+     * A full guard table leaves it named (until this ref's next note). */
+    for (UW i = 0; i < GL_GC_REFS; i++) {
+        GL_GC_REF *r = &gl_gc_ref[i];
+        if (!r->used || !r->vpend) continue;
+        if (gl_gc_guard() != 0) continue;
+        gl_gc_drop_gen(r->node, r->vroot, r->vdepth, r->vn, "a cleanup cut short by a restart");
+        r->vpend = 0;
+        gl_gc_store();
     }
 #endif
 }
@@ -628,7 +653,7 @@ static GL_GC_REF *gl_gc_ref_of(pk_node_t node)
     }
 #endif
     if (!r) return 0;                           /* more refs than slots: no cleanup */
-    r->used = 1; r->node = node; r->n = 0; r->own = 0; r->pend = 0; r->last = gl_gc_tick;
+    r->used = 1; r->node = node; r->n = 0; r->own = 0; r->pend = 0; r->vpend = 0; r->last = gl_gc_tick;
 #if !defined(B5_NC_GC_NO_EVICT)
     if (old.used) {
         gl_gc_store();                          /* forgotten before the drop */
@@ -638,6 +663,7 @@ static GL_GC_REF *gl_gc_ref_of(pk_node_t node)
             for (UW g = 0; g < old.n; g++)
                 gl_gc_drop_gen(old.node, old.root[g], old.depth[g], old.nchunk[g], "a freed slot");
             if (old.pend) gl_gc_drop_gen(old.node, old.proot, old.pdepth, old.pnchunk, "a freed slot's fetch");
+            if (old.vpend) gl_gc_drop_gen(old.node, old.vroot, old.vdepth, old.vn, "a freed slot's cleanup");
         }
         old.used = 0;
     }
@@ -706,8 +732,16 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     r->depth[1] = r->depth[0]; r->nchunk[1] = r->nchunk[0];
     r->depth[0] = (UB)depth;   r->nchunk[0] = nchunk;
     if (r->n < keep) r->n++;
-    /* gc-restart: written before the drop. A kill during the drop leaves the
-     * rest of the victim in the store (it is no longer a root): a small window */
+    /* gc-restart: written before the drop, with the victim (step 3): a kill
+     * before or during the drop leaves it named in gl.gcref, and the next start
+     * drops it (gl_gc_load). Before step 3 it was on no root for good. */
+#if !defined(B5_NC_GC_NO_VIC)
+    if (have_vic) {
+        for (UW b = 0; b < PFS_ID_LEN; b++) r->vroot[b] = vic[b];
+        r->vdepth = (UB)vdepth; r->vn = vn;
+    }
+    r->vpend = (UB)have_vic;
+#endif
     gl_gc_store();
 #if defined(GL_GC_TEST)
     if (have_vic && gl_gc_test_cut) { gl_gc_test_cut = 0; return; }   /* audit-232: killed here */
@@ -717,6 +751,7 @@ static void gl_gc_note(pk_node_t node, const U1 root[PFS_ID_LEN], UW depth, UW n
     if (gl_gc_guard() < 0) return;
     gl_gc_dropped = 0; gl_gc_seen = 0;
     INT w = gl_gc_walk(vic, vdepth, vn, 2);
+    r->vpend = 0;                               /* in RAM; the next write says so */
     gp("[b5-gc] st/"); gpd(node); gp(": dropped "); gpd(gl_gc_dropped); gp(" of ");
     gpd(gl_gc_seen); gp(w < 0 ? " ids (the old generation was not all here)\r\n" : (keep == 2 ? " ids of the own generation two back\r\n" : " ids of the peer's generation one back\r\n"));
     /* H42: after an own cleanup, the own generation ONE back (a peer may still be

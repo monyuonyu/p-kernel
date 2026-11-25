@@ -30,7 +30,8 @@
  *
  *  Falsifiers (tests/llm/run_b5_gc_slots.sh): -DB5_NC_GC_NO_EVICT turns
  *  gcs-evict and gcs-17th red; -DB5_NC_GC_NO_PEND gcs-pend and gcs-pend2;
- *  -DB5_NC_GC_KEEP_LOST gcs-lost.
+ *  -DB5_NC_GC_KEEP_LOST gcs-lost, gcs-holds and gcs-vic (no guard table);
+ *  -DB5_NC_GC_NO_VIC gcs-vic (step 3: the victim is not in gl.gcref).
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>

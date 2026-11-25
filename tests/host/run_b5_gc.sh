@@ -37,6 +37,11 @@
 # B5GC_PHASE=h4q (added 2026-11-25 before its fix, audit-231 🔁GCR): the kill is a
 # quarter round after head 4, while node 1 fetches the peers' gen 4; 4370e5f5 was
 # R1 red there twice (1.052, 1.171: the blocks fetched so far were on no root).
+# B5GC_PHASE=h4half / h3q (audit-232): half a round after head 4 / a quarter
+# round after head 3. ad94eb1f was R1 red 1.057 in 1 h3q arm of 4 (a kill
+# between a note's gl.gcref write and its drop; step 3 names the victim in that
+# write). The window is hit by chance: the decisive check is [gcs-vic] in
+# tests/llm/run_b5_gc_slots.sh; these phases are reports.
 # Output: "[b5-gc] <check> PASS|FAIL ...", then ALL PASS (exit 0) or RED.
 # Env: B5GC_PORT (relay, default 7531), B5GC_WORK=<dir> keeps the logs,
 # B5GC_CFLAGS (EXTRA_CFLAGS of the build). Rebuilds boot/linux* and cleans it.
@@ -53,7 +58,9 @@ RESTART="${B5GC_RESTART:-0}"
 case "${B5GC_PHASE:-h3half}" in
     h3half) KR=2; KD=2 ;;
     h4q)    KR=3; KD=4 ;;
-    *) echo "[b5-gc] B5GC_PHASE must be h3half or h4q"; exit 1 ;;
+    h4half) KR=3; KD=2 ;;
+    h3q)    KR=2; KD=4 ;;
+    *) echo "[b5-gc] B5GC_PHASE must be h3half, h4q, h4half or h3q"; exit 1 ;;
 esac
 PIDS=""
 cleanup() {
