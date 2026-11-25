@@ -581,7 +581,11 @@ static INT gl_gc_walk(const U1 root[PFS_ID_LEN], UW depth, UW nchunk, INT mode)
                  * a fetch cut short never had it) and drops the rest and the
                  * root; still -1 = "not all here". Before, the walk stopped
                  * here and the later leaves and the root stayed for good. */
+#if defined(B5_NC_GC_LEAF_KEEP)     /* falsifier for [gcs-vic5]: skip, keep the leaf's id */
+                if (mode == 2) { short_ = 1; continue; }
+#else
                 if (mode == 2) { short_ = 1; GL_GC_ONE(gl_gc_root.id[lf]); continue; }
+#endif
 #endif
                 return -1;
             }
