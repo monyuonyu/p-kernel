@@ -31,7 +31,9 @@
 #   C11 (audit-227, only with N3C_DNODE=1) node N paused, handed over while DEAD,
 #       resumed at its old incarnation: no holder revives it by a bare packet
 #   C12 (audit-227 m2, 11-24, only with N3C_DNODE=1) `nodes ownrow` PASS on every
-#       live node: the own row is outside the slots. Mutation m2 => FAIL
+#       live node: the own row is outside the slots. Mutation m2 => FAIL.
+#       And the state it borrows is put back whole (a hash before the save =
+#       after the put back): -DN3_NC_OWNROW_NO_MAP (sw_map not put back) => C12 FAIL
 # Negative controls: N3C_CFLAGS=-DN3_NC_NO_CAP (the implementation's switch
 # that takes the cap away: a node keeps all N-1) => C1 RED;
 # -DN3_NC_NO_PROBE_SLOTS (the slots are never probed) => C6 RED.

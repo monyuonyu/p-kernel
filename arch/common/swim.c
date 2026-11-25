@@ -397,6 +397,33 @@ void dnode_rows_reset(void)
 static SWIM_PEER sw_or_peer[SW_STORE] __attribute__((used));
 static SW_GRAVE  sw_or_grave[SW_STORE] __attribute__((used));
 static NODEMAP   sw_or_map __attribute__((used));
+/* C12 limit of audit-231 (a restore that misses a part was not seen by C1..C12:
+ * live SWIM put it right again): the saved state is copied byte by byte and a
+ * hash of it before the save must equal the hash after the put back.
+ * -DN3_NC_OWNROW_NO_MAP: negative control (sw_map is not put back = C12 red). */
+static void sw_or_cpy(void *d, const void *s, UW n)
+{
+    UB *dp = (UB *)d; const UB *sp = (const UB *)s;
+    for (UW i = 0; i < n; i++) dp[i] = sp[i];
+}
+static UW sw_or_fnv(UW h, const void *p, UW n)
+{
+    const UB *b = (const UB *)p;
+    for (UW i = 0; i < n; i++) { h ^= b[i]; h *= 16777619UL; }
+    return h;
+}
+static UW sw_or_hash(void)
+{
+    UW h = 2166136261UL;
+    h = sw_or_fnv(h, &sw_map, sizeof sw_map);
+    h = sw_or_fnv(h, sw_peer, sizeof sw_peer);
+    h = sw_or_fnv(h, sw_grave, sizeof sw_grave);
+    h = sw_or_fnv(h, &sw_grave_next, sizeof sw_grave_next);
+    h = sw_or_fnv(h, &sw_refused, sizeof sw_refused);
+    h = sw_or_fnv(h, &dnode_self_row, sizeof dnode_self_row);
+    h = sw_or_fnv(h, &dnode_self_set, sizeof dnode_self_set);
+    return h;
+}
 INT swim_ownrow_self_test(void (*emit)(const char *))
 {
     void (*say)(const char *) = emit ? emit : sw_puts;
@@ -407,10 +434,13 @@ INT swim_ownrow_self_test(void (*emit)(const char *))
     }
     SW_SELFTEST_ENTER();
     PK_NOSW_ENTER();
-    sw_or_map = sw_map;
-    for (INT i = 0; i < SW_STORE; i++) { sw_or_peer[i] = sw_peer[i]; sw_or_grave[i] = sw_grave[i]; }
+    UW h0 = sw_or_hash();
+    sw_or_cpy(&sw_or_map, &sw_map, sizeof sw_map);
+    sw_or_cpy(sw_or_peer, sw_peer, sizeof sw_peer);
+    sw_or_cpy(sw_or_grave, sw_grave, sizeof sw_grave);
     INT gnext = sw_grave_next; UW refused = sw_refused;
-    DNODE own = dnode_self_row; UB own_set = dnode_self_set;
+    DNODE own; sw_or_cpy(&own, &dnode_self_row, sizeof own);
+    UB own_set = dnode_self_set;
     UH cap = sw_map.cap;
     nodemap_init(&sw_map, cap);
     for (INT i = 0; i < SW_STORE; i++) sw_grave[i].used = 0;
@@ -435,16 +465,23 @@ INT swim_ownrow_self_test(void (*emit)(const char *))
     if (kept != SW_STORE) fails++;
     if (mine != DNODE_ALIVE) fails++;
     /* put everything back */
-    sw_map = sw_or_map;
-    for (INT i = 0; i < SW_STORE; i++) { sw_peer[i] = sw_or_peer[i]; sw_grave[i] = sw_or_grave[i]; }
+#if !defined(N3_NC_OWNROW_NO_MAP)
+    sw_or_cpy(&sw_map, &sw_or_map, sizeof sw_map);
+#endif
+    sw_or_cpy(sw_peer, sw_or_peer, sizeof sw_peer);
+    sw_or_cpy(sw_grave, sw_or_grave, sizeof sw_grave);
     sw_grave_next = gnext; sw_refused = refused;
-    dnode_self_row = own; dnode_self_set = own_set;
+    sw_or_cpy(&dnode_self_row, &own, sizeof own); dnode_self_set = own_set;
+    UW h1 = sw_or_hash();
+    if (h1 != h0) fails++;
     PK_NOSW_LEAVE();
     SW_SELFTEST_LEAVE();
     say("[ownrow] slots "); sw_putdec((UW)SW_STORE); say(", other ids that kept a slot ");
-    sw_putdec((UW)kept); say(", own row "); say(mine == DNODE_ALIVE ? "ALIVE" : "not ALIVE"); say("\r\n");
-    say(fails ? "[ownrow] FAIL (the own row competes for a slot)\r\n"
-              : "[ownrow] PASS (the own row is outside the slots)\r\n");
+    sw_putdec((UW)kept); say(", own row "); say(mine == DNODE_ALIVE ? "ALIVE" : "not ALIVE");
+    say(h1 == h0 ? ", put back whole" : ", put back NOT whole (the state differs)"); say("\r\n");
+    say(fails ? (h1 != h0 ? "[ownrow] FAIL (the state was not put back)\r\n"
+                          : "[ownrow] FAIL (the own row competes for a slot)\r\n")
+              : "[ownrow] PASS (the own row is outside the slots, the state put back)\r\n");
     return fails;
 }
 #endif
