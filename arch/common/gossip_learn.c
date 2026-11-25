@@ -1941,6 +1941,7 @@ static float     gl_pcache[GL_PC_STORE][DTR_WEIGHT_FLOATS];
 static pk_node_t gl_powner[GL_PC_STORE];
 static UB        gl_phave[GL_PC_STORE];        /* 1 = the slot holds gl_powner's model */
 static UW        gl_prefused;                  /* models refused: the slots were full  */
+static UW        gl_ppushed;                   /* owners pushed out (no row): G4d     */
 static float     gl_pfetch[DTR_WEIGHT_FLOATS]; /* a fetch lands here, then into a slot */
 #define GL_IDS_MAX (2u * DREGION_MAX + GL_PC_STORE)
 static pk_node_t gl_ids[GL_IDS_MAX];           /* this round's ids (gl_gather_ids)     */
@@ -1949,7 +1950,7 @@ static UW        gl_nnarrow, gl_nrow;          /* [0,nnarrow) rows, [nnarrow,nro
 static void gl_pc_reset(void)
 {
     for (UW s = 0; s < GL_PC_STORE; s++) gl_phave[s] = 0;
-    gl_prefused = 0;
+    gl_prefused = 0; gl_ppushed = 0;
 }
 
 static INT gl_pc_find(pk_node_t p)
@@ -1972,8 +1973,16 @@ static INT gl_pc_take(pk_node_t p)
     INT s = gl_pc_find(p);
     if (s >= 0) return s;
     for (UW i = 0; i < GL_PC_STORE; i++) if (!gl_phave[i]) return (INT)i;
+#if !defined(GL_NC_NO_PUSH)   /* negative control of G4d: the push-out rule removed */
     if (gl_has_row(p))
-        for (UW i = 0; i < GL_PC_STORE; i++) if (!gl_has_row(gl_powner[i])) return (INT)i;
+        for (UW i = 0; i < GL_PC_STORE; i++)
+            if (!gl_has_row(gl_powner[i])) {
+                gl_ppushed++;   /* G4d (tests/host/run_gl_cap.sh GLCAP_ARM=push) */
+                gp("[gl] peer cache: node "); gpd(p); gp(" pushes out node ");
+                gpd(gl_powner[i]); gp(" (no row) "); gpd(gl_ppushed); gp("\r\n");
+                return (INT)i;
+            }
+#endif
     gl_prefused++;
     return -1;
 }
