@@ -791,6 +791,11 @@ void gl_gc_test_restart(void)                   /* RAM forgotten, as after a kil
 {
     for (UW i = 0; i < GL_GC_REFS; i++) gl_gc_ref[i].used = 0;
     gl_gc_tick = 0; gl_gc_loaded = 0;
+    /* audit-233: a real start has an empty guard table (bss). Before, the table
+     * of the last guard survived this "restart", and a drop at gl_gc_load without
+     * a guard of its own still spared the kept set ([gcs-vic3] could not see it) */
+    for (UW h = 0; h < GL_GC_HSIZE; h++) { gl_gc_key[h][0] = 0; gl_gc_key[h][1] = 0; }
+    gl_gc_fill = 0; gl_gc_guard_ok = 0;
 }
 INT gl_gc_test_slot(pk_node_t node)
 {
