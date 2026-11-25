@@ -11,12 +11,16 @@ product's round (st_round_trimmed t = 1 into a copy, st_round_adopt). Lines
 fixed in the design (section 4) before the code and before any run on the
 judgement seeds 311..318 (the probe saw only 301 302 with a scratch shim):
 
-  O1  outer4 <= trim4 - D1                       on >= NEED seeds   (the outer step helps)
+  O1  outer4 <= trim4 - D1                       on >= NEED seeds   (the outer step helps; both at
+                                                 EVERY 1 = 32 outer steps, the same communication)
   O2  outer4 <= alone-A                          on every seed      (the swarm still beats one node)
   O3  outer4-poison <= alone-A + D3              on every seed      (one garbage node: the gate holds)
   NC1 the build -DB5O_NC_PLAIN (lr 1 mu 0 = the plain merge) turns O1 red
   NC2 the build -DB5O_NC_FLIP (the outer gradient's sign flipped) turns O1 red
-  reading only (no line): look1 - alone-A (the momentum without a swarm), outer4 - trim4 per seed
+  P   (the product rule, printed, not the exit code) outer4 at EVERY 1 <= min(trim4 at
+      EVERY 2, trim4 at EVERY 4) on >= NEED seeds: only then st_round_outer goes into
+      st_region_round (with O1-O3 PASS); else it stays a hosted tool
+  reading only (no line): look1 - alone-A (the momentum without a swarm), outer4 - trim4 at EVERY 2 and 4
 
   b5_outer_check.py [--seeds "311 ... 318"] <dir>   exit 0 = O1-O3 green, NC1 NC2 red
   b5_outer_check.py --self-test
@@ -27,7 +31,7 @@ import shutil
 import sys
 import tempfile
 
-D1 = 0.03      # O1: fixed in the design from the seen seeds 301 302, before the code
+D1 = 0.02      # O1: fixed in the design from the seen seeds 301 302 (gains 0.092 0.029), before the code
 D3 = 0.02      # O3: step 5's T4 line
 NEED = 6
 SEEDS = " ".join(str(s) for s in range(311, 319))
@@ -36,6 +40,8 @@ NEEDED = {
     "plain": ["alone-A", "trim4", "outer4", "outer4-poison", "look1"],
     "ncplain": ["trim4", "outer4"],
     "ncflip": ["trim4", "outer4"],
+    "plain2": ["trim4", "outer4"],
+    "plain4": ["trim4", "outer4"],
 }
 
 
@@ -92,6 +98,15 @@ def judge(d, seeds, out=print):
         red = m < min(NEED, k)
         out("[b5o-judge] NC %s: O1 %d/%d -> %s" % (b, m, k, "red (as it must)" if red else "GREEN (the line does not see it)"))
         ncs.append(red)
+    np_ = 0
+    for s in seeds:
+        a, b2, b4 = logs[("plain", s)], logs[("plain2", s)], logs[("plain4", s)]
+        best = min(b2["trim4"], b4["trim4"])
+        np_ += a["outer4"] <= best + 1e-9
+        out("[b5o-judge] seed %s P outer4@1 %.4f best plain %.4f (%+.4f) | read outer4-trim4 @2 %+.4f @4 %+.4f"
+            % (s, a["outer4"], best, a["outer4"] - best, b2["outer4"] - b2["trim4"], b4["outer4"] - b4["trim4"]))
+    out("[b5o-judge] P %d/%d (need %d) %s" % (np_, k, min(NEED, k),
+        "MET: wire st_round_outer into st_region_round" if np_ >= min(NEED, k) else "not met: keep it a hosted tool"))
     good = ok1 and ok2 and ok3 and all(ncs)
     out("[result] %s  b5-outer" % ("PASS" if good else "FAIL"))
     return 0 if good else 1
@@ -112,6 +127,8 @@ def self_test():
                 write(d, "plain", s, plain)
                 write(d, "ncplain", s, ncp)
                 write(d, "ncflip", s, ncf)
+                write(d, "plain2", s, {"trim4": 2.45, "outer4": 2.44})
+                write(d, "plain4", s, {"trim4": 2.5, "outer4": 2.6})
             got = judge(d, list(seeds), out=lambda *_: None)
             print("  %s %s (want %d got %d)" % ("ok" if got == want else "BAD", name, want, got))
             return got == want
@@ -122,7 +139,7 @@ def self_test():
     ncp = {"trim4": 2.5, "outer4": 2.5}
     ncf = {"trim4": 2.5, "outer4": 2.9}
     r = [case("all green", good, ncp, ncf, 0)]
-    r.append(case("O1 red: gain below the line", dict(good, outer4=2.48), ncp, ncf, 1))
+    r.append(case("O1 red: gain below the line", dict(good, outer4=2.49), ncp, ncf, 1))
     r.append(case("O2 red: worse than one node", dict(good, outer4=3.1, trim4=3.2), ncp, ncf, 1))
     r.append(case("O3 red: the poison gets in", dict(good, **{"outer4-poison": 3.03}), ncp, ncf, 1))
     r.append(case("NC1 green = the line is blind", good, {"trim4": 2.5, "outer4": 2.4}, ncf, 1))

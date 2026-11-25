@@ -11,7 +11,10 @@
  *   student_outer_test <b1_held.txt> <seed> nc   the outer4 arm only (NC builds)
  *
  * Arms (S, ST_LR, common init, four nodes each a quarter of the first D bytes of
- * the fixture's train side, 32 passes, a round every 4 = 8 outer steps). The
+ * the fixture's train side, 32 passes, a round every EVERY passes: the
+ * judgement build has EVERY 1 = 32 outer steps; the builds plain2 and plain4
+ * (EVERY 2 and 4, "nc" mode) give the best plain frequency for the product
+ * rule P; research/b5-outer.md §4-5). The
  * product's form: candidate = st_round_trimmed (t = 1) of self and the three
  * others into a copy, then st_round_adopt on the fixture's held side (the gate);
  * no apprentice (student_region_round has none). Each arm's answer is node 0's
@@ -43,7 +46,9 @@
 #define SEQ 32
 #define D 3072
 #define PASSES 32
+#ifndef EVERY            /* the judgement build: -DEVERY=1 (32 outer steps); plain4: 4 (8 steps) */
 #define EVERY 4
+#endif
 #define K 4
 #define LN2 0.69314718055994530942
 
@@ -305,8 +310,8 @@ int main(int argc, char **argv)
     const char *bld = "plain";
 #endif
     int nc = argc > 3 && strcmp(argv[3], "nc") == 0;
-    printf("[b5o] seed %u lr %g outer %g/%g build %s quarter %d gate windows %d held windows %d\n",
-           (unsigned)seed, (double)ST_LR, (double)ST_OUTER_LR, (double)ST_OUTER_MU, bld, D / K,
+    printf("[b5o] seed %u lr %g outer %g/%g build %s every %d quarter %d gate windows %d held windows %d\n",
+           (unsigned)seed, (double)ST_LR, (double)ST_OUTER_LR, (double)ST_OUTER_MU, bld, EVERY, D / K,
            (fxn - fx_end) / SEQ, hn / SEQ);
     if (nc) { rounds(seed, 0, 0, "trim4"); rounds(seed, 1, 0, "outer4"); printf("[b5o] done\n"); return 0; }
     alone(seed);
