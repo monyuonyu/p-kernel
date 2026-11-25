@@ -40,7 +40,8 @@
  *                   its drop after the first leaf; the restart drops the rest
  *    [gcs-vic5]     audit-237 (GLS limit 1): a leaf here but unreadable (its
  *                   file rotted) is dropped by the walk too; -DB5_NC_GC_LEAF_KEEP
- *                   (skip the leaf, keep its id) and -DB5_NC_GC_WALK_STOP turn it red
+ *                   (skip the leaf, keep its id) and -DB5_NC_GC_WALK_STOP turn it red;
+ *                   the walk still counts as "not all here" (1 short walk)
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -343,7 +344,9 @@ int main(void)
     fclose(lf);
     int rot_here = access(lpath, F_OK) == 0, rot_has = pfs_has(leaf2) != 0;
     gen_t n15 = make_gen();
+    unsigned sh0 = gl_gc_test_shorts();
     gl_gc_test_note(15, n15.root, n15.depth, n15.nchunk);    /* the drop walk */
+    unsigned shn = gl_gc_test_shorts() - sh0;     /* GLS limit 2: the walk still says "not all here" */
     cur[15] = n15;
     unsigned ends = 0, mid = 0;
     for (unsigned c = 0; c < BIG_NCH; c++) {
@@ -352,10 +355,10 @@ int main(void)
     }
     int rot_after = access(lpath, F_OK) == 0, croot_here = pfs_has(croot) != 0;
     printf("[gcs] a depth-%u generation of %u chunks (root %d B, magic %s) with a rotten leaf 2: file here %d, readable %d;"
-           " after its drop: leaves 1+3 chunks here %u, leaf 2 chunks here %u, the rotten file here %d, root here %d, peer 15's new whole %d\n",
-           cdepth, cn, rl, magic == 0x58494C47u ? "GLIX" : "?", rot_here, rot_has, ends, mid, rot_after, croot_here, whole(&n15));
+           " after its drop: leaves 1+3 chunks here %u, leaf 2 chunks here %u, the rotten file here %d, root here %d, short walks %u, peer 15's new whole %d\n",
+           cdepth, cn, rl, magic == 0x58494C47u ? "GLIX" : "?", rot_here, rot_has, ends, mid, rot_after, croot_here, shn, whole(&n15));
     CHECK(cdepth == 2 && cn == BIG_NCH && rl == 16 + 3 * 32 && magic == 0x58494C47u && rot_here && !rot_has
-          && ends == 0 && mid == 127u && !rot_after && !croot_here && whole(&n15),
+          && ends == 0 && mid == 127u && !rot_after && !croot_here && shn == 1u && whole(&n15),
           "[gcs-vic5] a leaf here but unreadable (a rotten file) is dropped with the rest of the walk; only its own chunks stay");
 
     printf("[gcs] %d pass, %d fail\n", g_pass, g_fail);
