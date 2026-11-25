@@ -77,7 +77,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: RunGate unit + 3 negatives (tests/android/run_gate_unit.sh)
+      - name: RunGate unit + 5 negatives (tests/android/run_gate_unit.sh)
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 -o /tmp/kc.zip \
@@ -86,11 +86,11 @@ jobs:
           unzip -q /tmp/kc.zip -d /tmp/kc
           export KOTLINC=/tmp/kc/kotlinc/bin/kotlinc
           bash tests/android/run_gate_unit.sh
-          for m in nc_ignore_pierce nc_never_clear nc_pierce_always; do
+          for m in nc_ignore_pierce nc_never_clear nc_pierce_always nc_b5_no_charging nc_b5_unknown_open; do
             rc=0; bash tests/android/run_gate_unit.sh "$m" || rc=$?
             if [ "$rc" != 1 ]; then echo "negative $m: rc=$rc (want 1)"; exit 1; fi
           done
-          echo "RunGate: real PASS, 3 negatives red"
+          echo "RunGate: real PASS, 5 negatives red"
 
   vendor-patch-inventory:
     # gap-ledger 行 VENDOR-PATCH-LOSS への第2の梯子段(2026-08-12 のゲートは

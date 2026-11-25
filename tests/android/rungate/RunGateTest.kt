@@ -91,6 +91,21 @@ fun main() {
         check("G9-closed-tick-never-boots", a == N, "tick=$a (want NONE)")
     }
 
+    // B1 (research/b5-android-gate.md A2): the B5 round gate opens only when
+    // charging on unmetered Wi-Fi; 8 cases, exactly one open.
+    run {
+        var open = 0
+        var right = true
+        for (ch in listOf(true, false)) for (n in B5Gate.Net.values()) {
+            val a = B5Gate.allowed(ch, n)
+            if (a) open++
+            if (a != (ch && n == B5Gate.Net.UNMETERED_WIFI)) right = false
+        }
+        check("B1-b5-gate-only-charging-unmetered", open == 1 && right, "open=$open right=$right (want 1, true)")
+    }
+    // B2: an unknown network closes the B5 gate even while charging
+    check("B2-b5-gate-unknown-closed", !B5Gate.allowed(true, B5Gate.Net.UNKNOWN), "unknown+charging opened")
+
     println("[rungate] $passes passed, $fails failed")
     exitProcess(if (fails == 0) 0 else 1)
 }

@@ -8,6 +8,8 @@
 #          nc_ignore_pierce negative: reconcile ignores the pierce  — must FAIL
 #          nc_never_clear   negative: an open gate never ends it     — must FAIL
 #          nc_pierce_always negative: background starts pierce too   — must FAIL
+#          nc_b5_no_charging  negative: the B5 gate ignores charging — must FAIL
+#          nc_b5_unknown_open negative: an unknown network opens it  — must FAIL
 #   env KOTLINC = path to kotlinc (default: kotlinc on PATH).
 # rc: 0 all pass, 1 a check failed, 2 setup error (no kotlinc / marker missing).
 set -euo pipefail
@@ -37,6 +39,8 @@ case "$mode" in
     nc_ignore_pierce) nc 'NC-KEEP-PIERCE' '/NC-KEEP-PIERCE/d' ;;
     nc_never_clear)   nc 'NC-CLEAR-PIERCE' '/NC-CLEAR-PIERCE/d' ;;
     nc_pierce_always) nc 'NC-EXPLICIT-ONLY' 's/if (userExplicit) {.*NC-EXPLICIT-ONLY/if (true) {/' ;;
+    nc_b5_no_charging) nc 'NC-B5-CHARGING' '/NC-B5-CHARGING/d' ;;
+    nc_b5_unknown_open) nc 'NC-B5-UNKNOWN-CLOSED' 's/return false     \/\/ NC-B5-UNKNOWN-CLOSED/return true/' ;;
     *) echo "[rungate] ERROR: unknown mode $mode"; exit 2 ;;
 esac
 
