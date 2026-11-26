@@ -49,3 +49,4 @@ hosted の `DNODE_ROWS`＝DNODE_MAX＋32。行 0..63 は番号そのもの、広
 - R2 緑（master 20）、NC2 で R2 赤 1、R1 は赤のまま（4b の仕事）。crown 2 つ全バイト同じ・bare の警告 48・76・hosted 57＝master と同じ。r3_once は hosted だけ（bare でも関数にすると aarch64 −36 B・x86 +16 B 動いた＝bare の 4 か所は元の文）
 - §6 ① スタック（-fstack-usage、hosted -O1）: 64/256/1024 で region_supernode_test 320/1,088/4,160 B・region_size_narrow 240/624/2,160 B（master は 256 以上でループが潰れ 16 B と出る）＝4b で行へ
 - 限界: supernode_select・teacher_select は UB で返し 0xFF が「無し」＝番号 255 以上の当選は切れる（今は 64 台、4b で）
+- 監査-239（限界つき PASS、master へ）: R2 master 20→0・NC2 1・私の壊し（mw_publish_weights を U1 に戻す）で R2 赤 1（r3_incontext.c:6478）、crown 同じ。限界: 「送り手ごとに 1 回」の表示はどの試験も読まない（前から）。**4b への注**: 今は行を渡さないので表は正しいが、4b で行を渡すときは持ち主の「空ける関数」で r3 の 3 本の表のその行も 0 に戻す（でないと次の持ち主の最初の不一致が出ない）
