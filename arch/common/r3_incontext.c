@@ -54,6 +54,35 @@
 #include "kernel.h"
 #include <tmonitor.h>
 
+/* N3 4a (research/n3-row-ring.md §2, §5): the three "printed once per
+ * sender" tables (mhi_bad, mq_ver_drop_seen on hosted; mt_ver_drop_seen on
+ * every target) are by the sender's row, not its id, so they follow
+ * DNODE_ROWS. A sender without a row prints every time, as an id out of range
+ * did. Hosted only: bare keeps its old test text at the two mind/teach
+ * sites (the crown: one function there moved aarch64 .text by 36 B).
+ * 1 = print now. */
+/* R3_ONCE_TEST / R3_ONCE_MARK: the sites built on bare too. Hosted: r3_once
+ * (the mark is in it). Bare: after the preprocessor the same tokens as the old
+ * test (the crown), and the braces stay balanced (tests/ci/check_callsites.py
+ * reads the function bodies). */
+#ifdef _TK_HOSTED_LIBC_
+#define R3_ONCE_TEST(tab, id) r3_once((tab), (id))
+#define R3_ONCE_MARK(tab, id) ((void)0)
+#else
+#define R3_ONCE_TEST(tab, id) (id >= DNODE_MAX || tab[id] == 0)
+#define R3_ONCE_MARK(tab, id) if (id < DNODE_MAX) tab[id] = 1
+#endif
+#ifdef _TK_HOSTED_LIBC_
+static int r3_once(UB *seen, pk_node_t id)
+{
+    int r = pk_node_row_find(id);
+    if (r < 0) return 1;
+    if (seen[r]) return 0;
+    seen[r] = 1;
+    return 1;
+}
+#endif
+
 /* LM-7 (VIII.9): the wire engram must fit ONE K-DDS payload — no chunking,
  * no new transport (the Path E "one packet" property, VIII.0 #1-2). */
 _Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX, "mind/teach fits one K-DDS payload");
@@ -4948,7 +4977,7 @@ static MHI_HIST_PKT mhi_tx, mhi_rx;
 static UB mhi_tick_n;
 static UW mhi_seq, mhi_rr;
 static UB mhi_seen[DNODE_MAX];
-static UB mhi_bad[DNODE_MAX];        /* "out of range" printed once per sender  */
+static UB mhi_bad[DNODE_ROWS];       /* "out of range" printed once per sender (r3_once) */
 
 /* the sender's per-node view of a teaching node -> the receiver's MC_SRC_* */
 static UB mhi_src_here(UB src, pk_node_t by)
@@ -5037,8 +5066,7 @@ static void mhi_recv(void)
     /* ids from the wire index the word lists when the record is printed
      * (r3_vocab_*_word returns NULL outside them) — drop, like mind/teach */
     if (mhi_rx.key >= R_KEYV || mhi_rx.v_lost >= R_VALV || mhi_rx.v_now >= R_VALV) {
-        if (!mhi_bad[o]) {
-            mhi_bad[o] = 1;
+        if (r3_once(mhi_bad, o)) {
             r_puts("[mind] mind/hist from node "); r_putdec((UW)o);
             r_puts(": id out of range, dropped\r\n");
         }
@@ -5104,7 +5132,7 @@ static pk_node_t mq_ans_org = PK_NODE_NONE;
 /* per-origin "already printed a want version/vocab drop" flag (own copy, not
  * shared with the mind/teach path — a mind/want drop must not suppress a
  * mind/teach drop print, or vice versa). */
-static UB mq_ver_drop_seen[DNODE_MAX];
+static UB mq_ver_drop_seen[DNODE_ROWS];
 
 /* per-asker answer-once memory + stagger + re-drive budget. */
 typedef struct {
@@ -5380,8 +5408,7 @@ static INT mq_take_want(W r)
     if (r < (W)sizeof mq_rx_want || mq_rx_want.magic != MQ_MAGIC) return 0;
     if (mq_rx_want.wire_ver != MT_WIRE_VER_VOCAB) {   /* version partition (IX.7) */
         U1 vorg = mq_rx_want.origin_node;
-        if (vorg >= DNODE_MAX || mq_ver_drop_seen[vorg] == 0) {
-            if (vorg < DNODE_MAX) mq_ver_drop_seen[vorg] = 1;
+        if (r3_once(mq_ver_drop_seen, vorg)) {
             r_puts("[mind] mind/want wire_ver mismatch from node ");
             r_putdec((UW)vorg); r_puts(" — want DROPPED (version-partitioned)\r\n");
         }
@@ -5389,8 +5416,7 @@ static INT mq_take_want(W r)
     }
     if (!mt_vocab_fp_ok(mq_rx_want.vocab_fp)) {        /* foreign word list (wave-47) */
         U1 forg = mq_rx_want.origin_node;
-        if (forg >= DNODE_MAX || mq_ver_drop_seen[forg] == 0) {
-            if (forg < DNODE_MAX) mq_ver_drop_seen[forg] = 1;
+        if (r3_once(mq_ver_drop_seen, forg)) {
             r_puts("[mind] mind/want vocab mismatch from node ");
             r_putdec((UW)forg); r_puts(" — want REFUSED (different word list;"
                    " answering would gossip mis-bound ids)\r\n");
@@ -5600,8 +5626,8 @@ static void mq_poll_wants(void)
     /* gates, in the mind/teach order (magic already checked). */
     if (mq_rx_want.wire_ver != MT_WIRE_VER_VOCAB) {   /* version partition (IX.7) */
         U1 vorg = mq_rx_want.origin_node;
-        if (vorg >= DNODE_MAX || mq_ver_drop_seen[vorg] == 0) {
-            if (vorg < DNODE_MAX) mq_ver_drop_seen[vorg] = 1;
+        if (R3_ONCE_TEST(mq_ver_drop_seen, vorg)) {
+            R3_ONCE_MARK(mq_ver_drop_seen, vorg);
             r_puts("[mind] mind/want wire_ver mismatch from node ");
             r_putdec((UW)vorg); r_puts(" — want DROPPED (version-partitioned)\r\n");
         }
@@ -5609,8 +5635,8 @@ static void mq_poll_wants(void)
     }
     if (!mt_vocab_fp_ok(mq_rx_want.vocab_fp)) {        /* foreign word list (wave-47) */
         U1 forg = mq_rx_want.origin_node;
-        if (forg >= DNODE_MAX || mq_ver_drop_seen[forg] == 0) {
-            if (forg < DNODE_MAX) mq_ver_drop_seen[forg] = 1;
+        if (R3_ONCE_TEST(mq_ver_drop_seen, forg)) {
+            R3_ONCE_MARK(mq_ver_drop_seen, forg);
             r_puts("[mind] mind/want vocab mismatch from node ");
             r_putdec((UW)forg); r_puts(" — want REFUSED (different word list;"
                    " answering would gossip mis-bound ids)\r\n");
@@ -5737,7 +5763,7 @@ static void mt_seq_put(pk_node_t org, UW v)  { int r = MT_SEQ_ROW(org); if (r >=
 #endif
 /* LM-8 (IX.8): per-origin "already printed a version-mismatch drop" flag,
  * so a re-driven mismatched packet prints once, not every poll. */
-static UB mt_ver_drop_seen[DNODE_MAX];
+static UB mt_ver_drop_seen[DNODE_ROWS];
 /* own-echo drop counter — the [shared-arrival] cert greps origin==me >= 1. */
 static UW mt_self_drops = 0;
 #ifdef _TK_HOSTED_LIBC_
@@ -5893,8 +5919,8 @@ void mind_net_task(INT stacd, void *exinf)
              * (a re-driven LATEST_ONLY slot re-arrives every poll). */
             if (mt_rx_pkt.wire_ver != MT_WIRE_VER_VOCAB) {
                 U1 vorg = mt_rx_pkt.origin_node;
-                if (vorg >= DNODE_MAX || mt_ver_drop_seen[vorg] == 0) {
-                    if (vorg < DNODE_MAX) mt_ver_drop_seen[vorg] = 1;
+                if (R3_ONCE_TEST(mt_ver_drop_seen, vorg)) {
+                    R3_ONCE_MARK(mt_ver_drop_seen, vorg);
                     r_puts("[mind] mind/teach wire_ver mismatch (got ");
                     r_putdec((UW)mt_rx_pkt.wire_ver);
                     r_puts(", expect "); r_putdec((UW)MT_WIRE_VER_VOCAB);
@@ -5913,8 +5939,8 @@ void mind_net_task(INT stacd, void *exinf)
              * the first-phone scramble (sky->light/fire->stale/night->blue). */
             if (!mt_vocab_fp_ok(mt_rx_pkt.vocab_fp)) {
                 U1 forg = mt_rx_pkt.origin_node;
-                if (forg >= DNODE_MAX || mt_ver_drop_seen[forg] == 0) {
-                    if (forg < DNODE_MAX) mt_ver_drop_seen[forg] = 1;
+                if (R3_ONCE_TEST(mt_ver_drop_seen, forg)) {
+                    R3_ONCE_MARK(mt_ver_drop_seen, forg);
                     r_puts("[mind] mind/teach vocab mismatch from node ");
                     r_putdec((UW)forg);
                     r_puts(" — engram REFUSED (different word list; ids would"
@@ -6449,7 +6475,7 @@ static INT mw_publish_weights(void)
      * in BOTH directions. */
     static UW push_rot = 0;
     UW pstart = push_rot % N_WCHUNK; push_rot += MW_PUSH_BURST;
-    for (U1 o = 0; o < DNODE_MAX; o++) {
+    for (pk_node_t o = 0; o < DNODE_MAX; o++) {
         if (o == drpc_my_node || !region_contains(o)) continue;
         pfs_repl_push(man_id, o);
         for (UW j = 0; j < MW_PUSH_BURST; j++)
