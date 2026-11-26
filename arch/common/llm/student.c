@@ -2926,6 +2926,44 @@ static int st_round_adopt_core(st_model *live, st_model *cand, const float *cmu,
     return 1;
 }
 
+/* B5 step 11 (research/b5-outer.md §2): the round's merge as an outer
+ * gradient with Nesterov momentum (DiLoCo, arXiv:2311.08105 v3, Alg. 1).
+ * Per element in double: d = anchor - cand, mom = mu*mom + d (stored float),
+ * cand = anchor - lr*(d + mu*mom). Two passes: the first only checks (every
+ * input and every result finite), the second writes, so a refusal leaves
+ * cand and mom BYTE-UNCHANGED. Only cand->w is written (Adam untouched).
+ * Falsifiers (cert only): -DB5O_NC_PLAIN (lr 1, mu 0 = the plain merge),
+ * -DB5O_NC_FLIP (the sign of d). Not called by st_region_round (rule P).   */
+static int st_f32_fin(float f)
+{
+    ST_F32 v; v.f = f;
+    return (v.u & 0x7F800000U) != 0x7F800000U;
+}
+int st_round_outer(st_model *cand, const float *anchor, float *mom, float lr, float mu)
+{
+    if (!cand || !anchor || !mom || !cand->w) return ST_E_ARG;
+    if (!(lr > 0.0f && lr <= 2.0f) || !(mu >= 0.0f && mu < 1.0f)) return ST_E_ARG;
+#if defined(B5O_NC_PLAIN)
+    lr = 1.0f; mu = 0.0f;
+#endif
+    int n = cand->n_params;
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < n; i++) {
+            float a = anchor[i], c = cand->w[i], m0 = mom[i];
+            if (!st_f32_fin(a) || !st_f32_fin(c) || !st_f32_fin(m0)) return 0;
+#if defined(B5O_NC_FLIP)
+            double d = (double)c - (double)a;
+#else
+            double d = (double)a - (double)c;
+#endif
+            float mf = (float)((double)mu * (double)m0 + d);
+            float wf = (float)((double)a - (double)lr * (d + (double)mu * (double)mf));
+            if (!st_f32_fin(mf) || !st_f32_fin(wf)) return 0;
+            if (pass) { mom[i] = mf; cand->w[i] = wf; }
+        }
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* B5 wire, stage 1 (research/b5-wire.md): one round with the region.   */
 /* ------------------------------------------------------------------ */
