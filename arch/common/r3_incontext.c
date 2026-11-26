@@ -5615,7 +5615,12 @@ static void mq_poll_wants(void)
     /* gates, in the mind/teach order (magic already checked). */
     if (mq_rx_want.wire_ver != MT_WIRE_VER_VOCAB) {   /* version partition (IX.7) */
         U1 vorg = mq_rx_want.origin_node;
+#ifdef _TK_HOSTED_LIBC_
         if (r3_once(mq_ver_drop_seen, vorg)) {
+#else   /* bare: the old test, the same code (crown) */
+        if (vorg >= DNODE_MAX || mq_ver_drop_seen[vorg] == 0) {
+            if (vorg < DNODE_MAX) mq_ver_drop_seen[vorg] = 1;
+#endif
             r_puts("[mind] mind/want wire_ver mismatch from node ");
             r_putdec((UW)vorg); r_puts(" — want DROPPED (version-partitioned)\r\n");
         }
@@ -5623,7 +5628,12 @@ static void mq_poll_wants(void)
     }
     if (!mt_vocab_fp_ok(mq_rx_want.vocab_fp)) {        /* foreign word list (wave-47) */
         U1 forg = mq_rx_want.origin_node;
+#ifdef _TK_HOSTED_LIBC_
         if (r3_once(mq_ver_drop_seen, forg)) {
+#else   /* bare: the old test, the same code (crown) */
+        if (forg >= DNODE_MAX || mq_ver_drop_seen[forg] == 0) {
+            if (forg < DNODE_MAX) mq_ver_drop_seen[forg] = 1;
+#endif
             r_puts("[mind] mind/want vocab mismatch from node ");
             r_putdec((UW)forg); r_puts(" — want REFUSED (different word list;"
                    " answering would gossip mis-bound ids)\r\n");
