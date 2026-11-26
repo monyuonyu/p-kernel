@@ -61,6 +61,17 @@
  * did. Hosted only: bare keeps its old test text at the two mind/teach
  * sites (the crown: one function there moved aarch64 .text by 36 B).
  * 1 = print now. */
+/* R3_ONCE_TEST / R3_ONCE_MARK: the sites built on bare too. Hosted: r3_once
+ * (the mark is in it). Bare: after the preprocessor the same tokens as the old
+ * test (the crown), and the braces stay balanced (tests/ci/check_callsites.py
+ * reads the function bodies). */
+#ifdef _TK_HOSTED_LIBC_
+#define R3_ONCE_TEST(tab, id) r3_once((tab), (id))
+#define R3_ONCE_MARK(tab, id) ((void)0)
+#else
+#define R3_ONCE_TEST(tab, id) (id >= DNODE_MAX || tab[id] == 0)
+#define R3_ONCE_MARK(tab, id) if (id < DNODE_MAX) tab[id] = 1
+#endif
 #ifdef _TK_HOSTED_LIBC_
 static int r3_once(UB *seen, pk_node_t id)
 {
@@ -5615,12 +5626,8 @@ static void mq_poll_wants(void)
     /* gates, in the mind/teach order (magic already checked). */
     if (mq_rx_want.wire_ver != MT_WIRE_VER_VOCAB) {   /* version partition (IX.7) */
         U1 vorg = mq_rx_want.origin_node;
-#ifdef _TK_HOSTED_LIBC_
-        if (r3_once(mq_ver_drop_seen, vorg)) {
-#else   /* bare: the old test, the same code (crown) */
-        if (vorg >= DNODE_MAX || mq_ver_drop_seen[vorg] == 0) {
-            if (vorg < DNODE_MAX) mq_ver_drop_seen[vorg] = 1;
-#endif
+        if (R3_ONCE_TEST(mq_ver_drop_seen, vorg)) {
+            R3_ONCE_MARK(mq_ver_drop_seen, vorg);
             r_puts("[mind] mind/want wire_ver mismatch from node ");
             r_putdec((UW)vorg); r_puts(" — want DROPPED (version-partitioned)\r\n");
         }
@@ -5628,12 +5635,8 @@ static void mq_poll_wants(void)
     }
     if (!mt_vocab_fp_ok(mq_rx_want.vocab_fp)) {        /* foreign word list (wave-47) */
         U1 forg = mq_rx_want.origin_node;
-#ifdef _TK_HOSTED_LIBC_
-        if (r3_once(mq_ver_drop_seen, forg)) {
-#else   /* bare: the old test, the same code (crown) */
-        if (forg >= DNODE_MAX || mq_ver_drop_seen[forg] == 0) {
-            if (forg < DNODE_MAX) mq_ver_drop_seen[forg] = 1;
-#endif
+        if (R3_ONCE_TEST(mq_ver_drop_seen, forg)) {
+            R3_ONCE_MARK(mq_ver_drop_seen, forg);
             r_puts("[mind] mind/want vocab mismatch from node ");
             r_putdec((UW)forg); r_puts(" — want REFUSED (different word list;"
                    " answering would gossip mis-bound ids)\r\n");
@@ -5916,12 +5919,8 @@ void mind_net_task(INT stacd, void *exinf)
              * (a re-driven LATEST_ONLY slot re-arrives every poll). */
             if (mt_rx_pkt.wire_ver != MT_WIRE_VER_VOCAB) {
                 U1 vorg = mt_rx_pkt.origin_node;
-#ifdef _TK_HOSTED_LIBC_
-                if (r3_once(mt_ver_drop_seen, vorg)) {
-#else           /* bare: the old test, the same code (crown) */
-                if (vorg >= DNODE_MAX || mt_ver_drop_seen[vorg] == 0) {
-                    if (vorg < DNODE_MAX) mt_ver_drop_seen[vorg] = 1;
-#endif
+                if (R3_ONCE_TEST(mt_ver_drop_seen, vorg)) {
+                    R3_ONCE_MARK(mt_ver_drop_seen, vorg);
                     r_puts("[mind] mind/teach wire_ver mismatch (got ");
                     r_putdec((UW)mt_rx_pkt.wire_ver);
                     r_puts(", expect "); r_putdec((UW)MT_WIRE_VER_VOCAB);
@@ -5940,12 +5939,8 @@ void mind_net_task(INT stacd, void *exinf)
              * the first-phone scramble (sky->light/fire->stale/night->blue). */
             if (!mt_vocab_fp_ok(mt_rx_pkt.vocab_fp)) {
                 U1 forg = mt_rx_pkt.origin_node;
-#ifdef _TK_HOSTED_LIBC_
-                if (r3_once(mt_ver_drop_seen, forg)) {
-#else           /* bare: the old test, the same code (crown) */
-                if (forg >= DNODE_MAX || mt_ver_drop_seen[forg] == 0) {
-                    if (forg < DNODE_MAX) mt_ver_drop_seen[forg] = 1;
-#endif
+                if (R3_ONCE_TEST(mt_ver_drop_seen, forg)) {
+                    R3_ONCE_MARK(mt_ver_drop_seen, forg);
                     r_puts("[mind] mind/teach vocab mismatch from node ");
                     r_putdec((UW)forg);
                     r_puts(" — engram REFUSED (different word list; ids would"
