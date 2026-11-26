@@ -46,6 +46,6 @@ hosted の `DNODE_ROWS`＝DNODE_MAX＋32。行 0..63 は番号そのもの、広
 ## 7. 4a（11-26 19:05 の回、枝 feat/n3-row-4a、監査待ち）
 
 - 20 か所のループと protect の holder_count を pk_node_t に（hosted 16 ビット、ベアは unsigned char＝同じ型）。r3 の 3 本は DNODE_ROWS の大きさで `r3_once`（pk_node_row_find、行の無い送り手は毎回出す）。行の取り方は同じ
-- R2 緑（master 20）、R1 は赤のまま（4b の仕事）
+- R2 緑（master 20）、NC2 で R2 赤 1、R1 は赤のまま（4b の仕事）。crown 2 つ全バイト同じ・bare の警告 48・76・hosted 57＝master と同じ。r3_once は hosted だけ（bare でも関数にすると aarch64 −36 B・x86 +16 B 動いた＝bare の 4 か所は元の文）
 - §6 ① スタック（-fstack-usage、hosted -O1）: 64/256/1024 で region_supernode_test 320/1,088/4,160 B・region_size_narrow 240/624/2,160 B（master は 256 以上でループが潰れ 16 B と出る）＝4b で行へ
 - 限界: supernode_select・teacher_select は UB で返し 0xFF が「無し」＝番号 255 以上の当選は切れる（今は 64 台、4b で）
