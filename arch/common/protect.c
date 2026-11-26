@@ -81,7 +81,7 @@ typedef struct {
     U1 holders[DNODE_ROWS];      /* holders[r]=1: the peer of row r (pk_node_row)
                                   * announced holding. N2 7c: on hosted a wide
                                   * peer has a row too; bare: DNODE_ROWS==DNODE_MAX */
-    U1 holder_count;             /* distinct peers (excl. self) known holders */
+    pk_node_t holder_count;      /* distinct peers (excl. self) known holders */
     UW drive_age_ms;             /* since last actuator re-announce          */
     UB last_threat;              /* for transition logging (observability)   */
 } PROTECT_OBJ;

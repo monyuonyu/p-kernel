@@ -742,7 +742,7 @@ void drpc_init(pk_node_t my_node_id, UW my_ip)
     /* N2b: a wide self's address has its high byte in the third octet
      * (pk_node_ip); the narrow peers it seeds are on x.y.0.(d+1). */
     UW net = my_ip & (PK_NODE_IS_WIDE(my_node_id) ? 0x0000FFFFUL : 0x00FFFFFFUL);
-    for (UB d = 0; d < DNODE_MAX; d++) {
+    for (pk_node_t d = 0; d < DNODE_MAX; d++) {
         UW  ip      = ((UW)(d + 1) << 24) | net;
 #else
     for (UB d = 0; d < DNODE_MAX; d++) {
@@ -797,7 +797,7 @@ void drpc_task(INT stacd, void *exinf)
         tk_dly_tsk(500);
 
         /* Send heartbeat to all potential peers */
-        for (UB n = 0; n < DNODE_MAX; n++) {
+        for (pk_node_t n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
             /* Skip heartbeat to confirmed-dead nodes to reduce ARP traffic */
             if (DROW(n).state == DNODE_DEAD) continue;
@@ -806,7 +806,7 @@ void drpc_task(INT stacd, void *exinf)
         }
 
         /* Age nodes */
-        for (UB n = 0; n < DNODE_MAX; n++) {
+        for (pk_node_t n = 0; n < DNODE_MAX; n++) {
             if (n == drpc_my_node) continue;
             UB st = DROW(n).state;
             if (st == DNODE_UNKNOWN || st == DNODE_DEAD) continue;
@@ -837,7 +837,7 @@ void drpc_task(INT stacd, void *exinf)
 void drpc_nodes_list(void)
 {
     dp_puts("[nodes]  ID  State    IP\r\n");
-    for (UB n = 0; n < DNODE_MAX; n++) {
+    for (pk_node_t n = 0; n < DNODE_MAX; n++) {
         UB st = DROW(n).state;
         if (n == drpc_my_node) {
             dp_puts("          "); dp_putdec(n);

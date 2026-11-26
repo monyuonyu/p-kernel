@@ -87,7 +87,7 @@ static UB teacher_capable[DNODE_ROWS]; /* 1 = node self-declares teacher-capable
 
 void region_recompute(void)
 {
-    for (UB n = 0; n < DNODE_ROWS; n++) member[n] = 0;
+    for (pk_node_t n = 0; n < DNODE_ROWS; n++) member[n] = 0;
     member_cnt = 0;
     coord      = 0xFF;
 
@@ -105,7 +105,7 @@ void region_recompute(void)
     coord      = me;
 
     /* ALIVE かつ RTT≤τ のノードを取り込む */
-    for (UB n = 0; n < DNODE_MAX; n++) {
+    for (pk_node_t n = 0; n < DNODE_MAX; n++) {
         if (n == me) continue;
         if (dnode_state(n) != DNODE_ALIVE) continue;
         UW rtt = swim_rtt_ms(n);
@@ -201,7 +201,7 @@ void region_super_init(void)
  * integer-only (reads no float). Same result on every arch / node. */
 static UB supernode_select(const UB *mbr, const UB *cap)
 {
-    for (UB n = 0; n < DNODE_MAX; n++) {
+    for (pk_node_t n = 0; n < DNODE_MAX; n++) {
         if (mbr[n] && cap[n]) return n;   /* lowest id wins */
     }
     return 0xFF;                          /* no capable member → relay */
@@ -255,7 +255,7 @@ BOOL region_is_teacher_capable(pk_node_t node)
  * twin of supernode_select(). */
 static UB teacher_select(const UB *mbr, const UB *tch)
 {
-    for (UB n = 0; n < DNODE_MAX; n++) {
+    for (pk_node_t n = 0; n < DNODE_MAX; n++) {
         if (mbr[n] && tch[n]) return n;   /* lowest id wins */
     }
     return 0xFF;                          /* no teacher member → degrade */
@@ -314,7 +314,7 @@ INT region_left_out(pk_node_t *ids, UB *states, UW *rtts, INT max)
     INT k = 0;
     pk_node_t me = drpc_my_node;
     region_recompute();
-    for (UB n = 0; n < DNODE_MAX && k < max; n++) {
+    for (pk_node_t n = 0; n < DNODE_MAX && k < max; n++) {
         if (n == me || dnode_state(n) == 0) continue;
         if (region_is_member(n)) continue;
         ids[k] = n; states[k] = dnode_state(n); rtts[k] = swim_rtt_ms(n); k++;
@@ -463,7 +463,7 @@ void region_supernode_test(void)
      *   capable  = {2,5,7}          (node 1 present but NOT capable)
      * Expected supernode = 2 (lowest CAPABLE member, not lowest member). */
     UB mbr[DNODE_MAX]; UB cap[DNODE_MAX];
-    for (UB i = 0; i < DNODE_MAX; i++) { mbr[i] = 0; cap[i] = 0; }
+    for (pk_node_t i = 0; i < DNODE_MAX; i++) { mbr[i] = 0; cap[i] = 0; }
     mbr[1] = 1; mbr[2] = 1; mbr[5] = 1; mbr[7] = 1;
     cap[2] = 1; cap[5] = 1; cap[7] = 1;
 
@@ -497,13 +497,13 @@ void region_supernode_test(void)
     mbr[2] = 1; mbr[5] = 1;
 
     /* (5) relay fallback: ZERO capable members → 0xFF (degrade to relay). */
-    for (UB i = 0; i < DNODE_MAX; i++) cap[i] = 0;   /* nobody volunteered */
+    for (pk_node_t i = 0; i < DNODE_MAX; i++) cap[i] = 0;   /* nobody volunteered */
     super_check(supernode_select(mbr, cap) == 0xFF,
                 "relay fallback: no capable member -> 0xFF");
 
     /* (6) capable-but-not-member is ignored: capable {3}, member {5,7}.
      * Supernode must be a MEMBER of the region, so 5 (not 3). */
-    for (UB i = 0; i < DNODE_MAX; i++) { mbr[i] = 0; cap[i] = 0; }
+    for (pk_node_t i = 0; i < DNODE_MAX; i++) { mbr[i] = 0; cap[i] = 0; }
     mbr[5] = 1; mbr[7] = 1; cap[3] = 1; cap[5] = 1; cap[7] = 1;
     super_check(supernode_select(mbr, cap) == 5,
                 "non-member capable ignored: capable 3 not in region -> 5");
@@ -533,7 +533,7 @@ void region_supernode_test(void)
     {
         INT tch_fail = 0;
         UB  m2[DNODE_MAX], t2[DNODE_MAX];
-        for (UB i = 0; i < DNODE_MAX; i++) { m2[i] = 0; t2[i] = 0; }
+        for (pk_node_t i = 0; i < DNODE_MAX; i++) { m2[i] = 0; t2[i] = 0; }
         /* members {1,2,5,7}; teacher-capable {2,5,7} (1 is a member but not a
          * teacher). Expected teacher = 2 (lowest CAPABLE member, not member 1). */
         m2[1] = 1; m2[2] = 1; m2[5] = 1; m2[7] = 1;
@@ -561,7 +561,7 @@ void region_supernode_test(void)
         m2[2] = 1;
 
         /* degrade: ZERO teacher-capable members -> 0xFF (no teacher region). */
-        for (UB i = 0; i < DNODE_MAX; i++) t2[i] = 0;
+        for (pk_node_t i = 0; i < DNODE_MAX; i++) t2[i] = 0;
         UB tnf = teacher_select(m2, t2);
         if (tnf != 0xFF) tch_fail++;
         rg_puts(tnf == 0xFF ? "[region-teacher]   PASS " : "[region-teacher]   FAIL ");
