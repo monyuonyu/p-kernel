@@ -3652,6 +3652,11 @@ jobs:
       # three of test-holes H27): seconds. The judgement seeds are not here.
       - name: B5 step 10 self-tests (s10unit + 5 falsifier builds red)
         run: B5S10_MODE=self bash tests/llm/run_b5_step10.sh
+      # B5 step 11 (research/b5-outer.md): st_round_outer's own cases (O4) and
+      # the two falsifier builds NC_PLAIN / NC_FLIP red in the unit. Seconds.
+      # The judgement seeds 311-318 are not here (about 2 hours).
+      - name: B5 step 11 self-tests ([b5o] O4 unit + NC_PLAIN, NC_FLIP red)
+        run: B5O_MODE=self bash tests/llm/run_b5_outer.sh
       # B5 D4 (research/b5-m-round.md §7-8): the student's chunks are written
       # without their own fsyncs, one syncfs ends the publish and the fetch.
       # Gate W13c at tier S and M; the falsifier FSYNC_EACH must be red by the
