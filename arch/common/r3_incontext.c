@@ -58,8 +58,10 @@
  * sender" tables (mhi_bad, mq_ver_drop_seen on hosted; mt_ver_drop_seen on
  * every target) are by the sender's row, not its id, so they follow
  * DNODE_ROWS. A sender without a row prints every time, as an id out of range
- * did. Bare: pk_node_row_find is the old range check (DNODE_ROWS ==
- * DNODE_MAX). 1 = print now.                                                */
+ * did. Hosted only: bare keeps its old test text at the two mind/teach
+ * sites (the crown: one function there moved aarch64 .text by 36 B).
+ * 1 = print now. */
+#ifdef _TK_HOSTED_LIBC_
 static int r3_once(UB *seen, pk_node_t id)
 {
     int r = pk_node_row_find(id);
@@ -68,6 +70,7 @@ static int r3_once(UB *seen, pk_node_t id)
     seen[r] = 1;
     return 1;
 }
+#endif
 
 /* LM-7 (VIII.9): the wire engram must fit ONE K-DDS payload — no chunking,
  * no new transport (the Path E "one packet" property, VIII.0 #1-2). */
@@ -5903,7 +5906,12 @@ void mind_net_task(INT stacd, void *exinf)
              * (a re-driven LATEST_ONLY slot re-arrives every poll). */
             if (mt_rx_pkt.wire_ver != MT_WIRE_VER_VOCAB) {
                 U1 vorg = mt_rx_pkt.origin_node;
+#ifdef _TK_HOSTED_LIBC_
                 if (r3_once(mt_ver_drop_seen, vorg)) {
+#else           /* bare: the old test, the same code (crown) */
+                if (vorg >= DNODE_MAX || mt_ver_drop_seen[vorg] == 0) {
+                    if (vorg < DNODE_MAX) mt_ver_drop_seen[vorg] = 1;
+#endif
                     r_puts("[mind] mind/teach wire_ver mismatch (got ");
                     r_putdec((UW)mt_rx_pkt.wire_ver);
                     r_puts(", expect "); r_putdec((UW)MT_WIRE_VER_VOCAB);
@@ -5922,7 +5930,12 @@ void mind_net_task(INT stacd, void *exinf)
              * the first-phone scramble (sky->light/fire->stale/night->blue). */
             if (!mt_vocab_fp_ok(mt_rx_pkt.vocab_fp)) {
                 U1 forg = mt_rx_pkt.origin_node;
+#ifdef _TK_HOSTED_LIBC_
                 if (r3_once(mt_ver_drop_seen, forg)) {
+#else           /* bare: the old test, the same code (crown) */
+                if (forg >= DNODE_MAX || mt_ver_drop_seen[forg] == 0) {
+                    if (forg < DNODE_MAX) mt_ver_drop_seen[forg] = 1;
+#endif
                     r_puts("[mind] mind/teach vocab mismatch from node ");
                     r_putdec((UW)forg);
                     r_puts(" — engram REFUSED (different word list; ids would"
