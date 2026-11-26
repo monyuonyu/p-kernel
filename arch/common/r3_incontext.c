@@ -54,6 +54,21 @@
 #include "kernel.h"
 #include <tmonitor.h>
 
+/* N3 4a (research/n3-row-ring.md §2, §5): the three "printed once per
+ * sender" tables (mhi_bad, mq_ver_drop_seen on hosted; mt_ver_drop_seen on
+ * every target) are by the sender's row, not its id, so they follow
+ * DNODE_ROWS. A sender without a row prints every time, as an id out of range
+ * did. Bare: pk_node_row_find is the old range check (DNODE_ROWS ==
+ * DNODE_MAX). 1 = print now.                                                */
+static int r3_once(UB *seen, pk_node_t id)
+{
+    int r = pk_node_row_find(id);
+    if (r < 0) return 1;
+    if (seen[r]) return 0;
+    seen[r] = 1;
+    return 1;
+}
+
 /* LM-7 (VIII.9): the wire engram must fit ONE K-DDS payload — no chunking,
  * no new transport (the Path E "one packet" property, VIII.0 #1-2). */
 _Static_assert(sizeof(MT_TEACH_PKT) <= KDDS_DATA_MAX, "mind/teach fits one K-DDS payload");
@@ -4948,20 +4963,7 @@ static MHI_HIST_PKT mhi_tx, mhi_rx;
 static UB mhi_tick_n;
 static UW mhi_seq, mhi_rr;
 static UB mhi_seen[DNODE_MAX];
-static UB mhi_bad[DNODE_ROWS];       /* "out of range" printed once per sender  */
-/* N3 4a (research/n3-row-ring.md §2, §5): the three "printed once per
- * sender" tables (mhi_bad, mq_ver_drop_seen, mt_ver_drop_seen) are by the
- * sender's row, not its id, so they follow DNODE_ROWS. A sender without a row
- * prints every time, as an id out of range did. Bare: pk_node_row_find is
- * the old range check (DNODE_ROWS == DNODE_MAX). 1 = print now.            */
-static int r3_once(UB *seen, pk_node_t id)
-{
-    int r = pk_node_row_find(id);
-    if (r < 0) return 1;
-    if (seen[r]) return 0;
-    seen[r] = 1;
-    return 1;
-}
+static UB mhi_bad[DNODE_ROWS];       /* "out of range" printed once per sender (r3_once) */
 
 /* the sender's per-node view of a teaching node -> the receiver's MC_SRC_* */
 static UB mhi_src_here(UB src, pk_node_t by)

@@ -42,3 +42,10 @@ hosted の `DNODE_ROWS`＝DNODE_MAX＋32。行 0..63 は番号そのもの、広
 - `PK_NODE_ROWS >= SWIM_PEERS` を _Static_assert に（SWIM_PEERS は -D で変わる。下回ると枠を持つ番号だけで満ち、渡せる行が無い）
 - 行番号を握ったまま待つタスクは、待ちの後に _find で取り直す（300 s を越える待ちで行が渡る）。R4 に 1 項目
 - R2 は UB<300 も拾う、UH は拾わない（今は害なし）
+
+## 7. 4a（11-26 19:05 の回、枝 feat/n3-row-4a、監査待ち）
+
+- 20 か所のループと protect の holder_count を pk_node_t に（hosted 16 ビット、ベアは unsigned char＝同じ型）。r3 の 3 本は DNODE_ROWS の大きさで `r3_once`（pk_node_row_find、行の無い送り手は毎回出す）。行の取り方は同じ
+- R2 緑（master 20）、R1 は赤のまま（4b の仕事）
+- §6 ① スタック（-fstack-usage、hosted -O1）: 64/256/1024 で region_supernode_test 320/1,088/4,160 B・region_size_narrow 240/624/2,160 B（master は 256 以上でループが潰れ 16 B と出る）＝4b で行へ
+- 限界: supernode_select・teacher_select は UB で返し 0xFF が「無し」＝番号 255 以上の当選は切れる（今は 64 台、4b で）
