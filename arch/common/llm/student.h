@@ -481,6 +481,20 @@ int  st_merge_trust_group(st_model *into, const st_model *prev,
 int  st_round_adopt(st_model *live, st_model *cand, const uint8_t *bytes,
                     int n, int seq, float *live_loss, float *cand_loss);
 
+/* st_round_outer (B5 step 11, research/b5-outer.md §2): the round's merge
+ * `cand` read as an outer gradient d = anchor - cand (anchor = the node's live
+ * w at the start of the round) with Nesterov momentum (DiLoCo, arXiv:2311.08105
+ * v3 Alg. 1 and Sec. 3.1). Per element, in double, stored as float:
+ *   mom = mu*mom + d;  cand.w = anchor - lr*(d + mu*mom).
+ * lr 1, mu 0 is the plain merge. Only cand->w and mom are written; Adam's
+ * moments are not touched. Returns 1 done; 0 refused (a non-finite input or
+ * result: cand and mom BYTE-UNCHANGED); ST_E_ARG (NULL, lr outside (0, 2],
+ * mu outside [0, 1)). Not wired into st_region_round: it goes there only
+ * when the product rule P of the design holds. Hosted only.               */
+#define ST_OUTER_LR 0.7f
+#define ST_OUTER_MU 0.9f
+int  st_round_outer(st_model *cand, const float *anchor, float *mom, float lr, float mu);
+
 /* st_region_round (B5 wire, stage 1, research/b5-wire.md): one round of the
  * resident student with its region. A peer's blob is an envelope of ST_RG_HDR
  * bytes (magic ST_RG_MAGIC, the round's generation, the st_save length, 0)
